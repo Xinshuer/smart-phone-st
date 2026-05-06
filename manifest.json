@@ -2,7 +2,7 @@
     "display_name": "Smart Phone",
     "loading_order": 5,
     "requires": [],
-    "optional": ["smart-image-gen-st"],
+    "optional": ["smart-image-gen"],
     "js": "index.js",
     "css": "style.css",
     "author": "Xinshuer",
