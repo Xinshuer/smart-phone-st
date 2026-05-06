@@ -26,7 +26,8 @@ import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumD
 import { renderMoments, bindMomentsHandlers, setMomentsView as momentsSetView } from './lib/apps/moments.js';
 import { generateContactMoments, generateMomentReplies } from './lib/moments-api.js';
 import { renderXHS, bindXHSHandlers, getActiveView as xhsView, setView as xhsSetView, TAGS as XHS_TAGS } from './lib/apps/xhs.js';
-import { renderSettings, bindSettingsHandlers, entryToContact } from './lib/apps/settings.js';
+import { renderSettings, bindSettingsHandlers, entryToContact, partitionContacts, setShowAllContactsFlag } from './lib/apps/settings.js';
+import { getActiveBookNames } from './lib/worldbook.js';
 import { escapeHtml } from './lib/util.js';
 
 const EXT = 'smart-phone';
@@ -479,6 +480,12 @@ async function rerender() {
             onFetchModels: handleFetchModels,
             onPromptEdit: handlePromptEdit,
             onGenAppearance: handleGenerateAppearance,
+            // World-book scoped contacts (v0.10.4)
+            onShowAllToggle: handleShowAllContactsToggle,
+            onBatchAssignOrphans: openBatchAssignOrphansModal,
+            onDeleteOrphans: handleDeleteAllOrphans,
+            onImportFromOtherWorld: openImportFromOtherWorldModal,
+            onEditContactSourceBook: openEditContactSourceBookModal,
         });
     }
 
@@ -1007,9 +1014,27 @@ async function handleImportContact(uid, bookName) {
         e = entries.find((x) => x.uid === uid);
     }
     if (!e) return toastr.warning('找不到该条目');
-    const contact = entryToContact(e);
-    State.upsertContact(contact);
-    toastr.success(`已导入：${contact.name}`);
+    const fresh = entryToContact(e);
+    // Preserve existing anchor + merge sourceBook arrays (don't reset reference image / seed on re-import)
+    const existing = State.findContact(fresh.name);
+    if (existing) {
+        const oldSb = Array.isArray(existing.sourceBook) ? existing.sourceBook : (existing.sourceBook ? [existing.sourceBook] : []);
+        const newSb = Array.isArray(fresh.sourceBook) ? fresh.sourceBook : (fresh.sourceBook ? [fresh.sourceBook] : []);
+        const mergedSb = [...new Set([...oldSb, ...newSb])];
+        // Update rawContent + bookName + sourceBook merge; KEEP existing anchor (user's hard work)
+        State.upsertContact({
+            ...existing,
+            rawContent: fresh.rawContent,
+            note: fresh.note,
+            bookName: fresh.bookName || existing.bookName,
+            sourceBook: mergedSb,
+            // existing.anchor preserved via spread
+        });
+        toastr.success(`已更新：${fresh.name}（保留人设图）`);
+    } else {
+        State.upsertContact(fresh);
+        toastr.success(`已导入：${fresh.name}`);
+    }
     rerender();
 }
 
@@ -1186,6 +1211,237 @@ function handleRemoveContact(name) {
     if (!confirm(`移除联系人 ${name}?`)) return;
     State.removeContact(name);
     rerender();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// World-book scoped contacts (v0.10.4) — handlers + modals
+// ─────────────────────────────────────────────────────────────────────────
+
+function handleShowAllContactsToggle(checked) {
+    setShowAllContactsFlag(checked);
+    rerender();
+}
+
+// Returns the union of all worldbook names that have ever been used by:
+// - currently active books, contacts' sourceBook entries, world-context entries
+// Used to populate world-book selector lists in modals.
+function getKnownBookNames() {
+    const set = new Set(getActiveBookNames());
+    const s = State.load();
+    for (const c of (s.contacts || [])) {
+        const sb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+        for (const b of sb) if (b) set.add(b);
+        if (c.bookName) set.add(c.bookName);
+    }
+    for (const w of (s.worldContext || [])) {
+        if (w.bookName) set.add(w.bookName);
+    }
+    return [...set];
+}
+
+// Modal opener — generic helper used by all v0.10.4 modals
+function openContactsModal(title, bodyHtml, footerHtml) {
+    if (document.getElementById('phone-contacts-modal')) return null;
+    const modal = document.createElement('div');
+    modal.id = 'phone-contacts-modal';
+    modal.className = 'phone-forward-modal';
+    modal.innerHTML = `
+        <div class="phone-forward-card">
+            <div class="phone-forward-header">
+                <span>${escapeHtml(title)}</span>
+                <button type="button" class="phone-forward-close" title="关闭">✕</button>
+            </div>
+            <div class="phone-forward-body">${bodyHtml}</div>
+            <div class="phone-forward-footer">${footerHtml}</div>
+        </div>
+    `;
+    (phoneRoot || document.body).appendChild(modal);
+    modal.querySelector('.phone-forward-close')?.addEventListener('click', () => modal.remove());
+    return modal;
+}
+
+// Batch-assign orphan contacts to worldbooks
+function openBatchAssignOrphansModal() {
+    const s = State.load();
+    const { orphans } = partitionContacts(s.contacts, getActiveBookNames());
+    if (orphans.length === 0) { toastr.info('没有未归属的联系人'); return; }
+    const knownBooks = getKnownBookNames();
+    if (knownBooks.length === 0) { toastr.warning('没有已知的世界书 — 先激活一本世界书'); return; }
+
+    const rows = orphans.map((c) => `
+        <div class="phone-orphan-row" data-name="${escapeHtml(c.name)}">
+            <input type="checkbox" class="phone-orphan-check" data-name="${escapeHtml(c.name)}">
+            <span class="phone-orphan-name">${escapeHtml(c.name)}</span>
+            <select class="phone-orphan-select phone-select" data-name="${escapeHtml(c.name)}">
+                <option value="">-- 不分配 --</option>
+                ${knownBooks.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+            </select>
+        </div>
+    `).join('');
+
+    const body = `
+        <p class="phone-settings-hint">勾选并选目的地世界书，可逐条不同选择，也可批量统一分配。</p>
+        <div class="phone-orphan-list">${rows}</div>
+        <div class="phone-orphan-batch">
+            <label>批量统一：</label>
+            <select id="phone-orphan-batch-select" class="phone-select">
+                <option value="">-- 选择世界书 --</option>
+                ${knownBooks.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+            </select>
+            <button id="phone-orphan-batch-apply" class="phone-btn">应用到已勾选</button>
+        </div>
+    `;
+    const footer = `
+        <button type="button" class="phone-forward-cancel">取消</button>
+        <button type="button" class="phone-forward-submit" id="phone-orphan-save">保存</button>
+    `;
+    const modal = openContactsModal('批量分配未归属联系人', body, footer);
+    if (!modal) return;
+
+    modal.querySelector('#phone-orphan-batch-apply')?.addEventListener('click', () => {
+        const target = modal.querySelector('#phone-orphan-batch-select')?.value || '';
+        if (!target) { toastr.warning('先选目标世界书'); return; }
+        modal.querySelectorAll('.phone-orphan-check:checked').forEach((cb) => {
+            const name = cb.dataset.name;
+            const sel = modal.querySelector(`.phone-orphan-select[data-name="${CSS.escape(name)}"]`);
+            if (sel) sel.value = target;
+        });
+    });
+
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-orphan-save')?.addEventListener('click', () => {
+        const updates = [];
+        modal.querySelectorAll('.phone-orphan-select').forEach((sel) => {
+            const name = sel.dataset.name;
+            const book = sel.value;
+            if (book) updates.push({ name, book });
+        });
+        if (updates.length === 0) { toastr.info('未选择任何分配'); return; }
+        const sNow = State.load();
+        for (const u of updates) {
+            const c = sNow.contacts.find((x) => x.name === u.name);
+            if (!c) continue;
+            const sb = Array.isArray(c.sourceBook) ? c.sourceBook : [];
+            if (!sb.includes(u.book)) sb.push(u.book);
+            c.sourceBook = sb;
+            if (!c.bookName) c.bookName = u.book;
+        }
+        State.save();
+        modal.remove();
+        toastr.success(`已分配 ${updates.length} 个联系人`);
+        rerender();
+    });
+}
+
+// Delete all orphans (confirmed)
+function handleDeleteAllOrphans() {
+    const s = State.load();
+    const { orphans } = partitionContacts(s.contacts, getActiveBookNames());
+    if (orphans.length === 0) { toastr.info('没有未归属的联系人'); return; }
+    if (!confirm(`确认删除全部 ${orphans.length} 个未归属联系人？\n此操作不可撤销，所有 anchor / 参考图都会丢失。`)) return;
+    const orphanNames = new Set(orphans.map((c) => c.name));
+    s.contacts = s.contacts.filter((c) => !orphanNames.has(c.name));
+    State.save();
+    toastr.success(`已删除 ${orphanNames.size} 个未归属联系人`);
+    rerender();
+}
+
+// Cross-world import: select contacts from inactive worlds → add active worlds to their sourceBook
+function openImportFromOtherWorldModal() {
+    const activeBooks = getActiveBookNames();
+    if (activeBooks.length === 0) { toastr.warning('当前没有激活的世界书'); return; }
+    const s = State.load();
+    const activeSet = new Set(activeBooks);
+    // Candidates: contacts that DON'T overlap with any active book (i.e. live in some other world)
+    const candidates = (s.contacts || []).filter((c) => {
+        const sb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+        if (sb.length === 0) return false; // orphans handled via batch-assign banner
+        return !sb.some((b) => activeSet.has(b));
+    });
+    if (candidates.length === 0) { toastr.info('其他世界没有可引入的联系人'); return; }
+
+    const rows = candidates.map((c) => {
+        const sb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+        return `
+        <label class="phone-cw-row">
+            <input type="checkbox" class="phone-cw-check" data-name="${escapeHtml(c.name)}">
+            <span class="phone-cw-name">${escapeHtml(c.name)}</span>
+            <span class="phone-cw-source">📖 ${escapeHtml(sb.join(' / '))}</span>
+        </label>`;
+    }).join('');
+
+    const body = `
+        <p class="phone-settings-hint">勾选要引入到当前世界（${escapeHtml(activeBooks.join(' / '))}）的联系人。anchor 数据共享，不会重新生成。</p>
+        <div class="phone-cw-list">${rows}</div>
+    `;
+    const footer = `
+        <button type="button" class="phone-forward-cancel">取消</button>
+        <button type="button" class="phone-forward-submit" id="phone-cw-import">引入选中</button>
+    `;
+    const modal = openContactsModal('从其他世界引入联系人', body, footer);
+    if (!modal) return;
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-cw-import')?.addEventListener('click', () => {
+        const checked = [...modal.querySelectorAll('.phone-cw-check:checked')];
+        if (checked.length === 0) { toastr.info('未选择任何联系人'); return; }
+        const sNow = State.load();
+        let count = 0;
+        for (const cb of checked) {
+            const name = cb.dataset.name;
+            const c = sNow.contacts.find((x) => x.name === name);
+            if (!c) continue;
+            const sb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+            for (const b of activeBooks) {
+                if (!sb.includes(b)) sb.push(b);
+            }
+            c.sourceBook = sb;
+            count++;
+        }
+        State.save();
+        modal.remove();
+        toastr.success(`已引入 ${count} 个联系人到当前世界`);
+        rerender();
+    });
+}
+
+// Per-contact source-book editor (📍 button on contact card)
+function openEditContactSourceBookModal(name) {
+    const s = State.load();
+    const c = State.findContact(name);
+    if (!c) { toastr.error('联系人不存在'); return; }
+    const knownBooks = getKnownBookNames();
+    const currentSb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+    const currentSet = new Set(currentSb);
+
+    if (knownBooks.length === 0) { toastr.warning('没有可选的世界书'); return; }
+
+    const rows = knownBooks.map((b) => `
+        <label class="phone-cw-row">
+            <input type="checkbox" class="phone-edit-source-check" value="${escapeHtml(b)}" ${currentSet.has(b) ? 'checked' : ''}>
+            <span class="phone-cw-name">${escapeHtml(b)}</span>
+        </label>
+    `).join('');
+
+    const body = `
+        <p class="phone-settings-hint"><strong>${escapeHtml(name)}</strong> 当前归属哪些世界书？勾选/取消后保存。</p>
+        <div class="phone-cw-list">${rows}</div>
+    `;
+    const footer = `
+        <button type="button" class="phone-forward-cancel">取消</button>
+        <button type="button" class="phone-forward-submit" id="phone-edit-source-save">保存</button>
+    `;
+    const modal = openContactsModal(`改归属世界书 — ${name}`, body, footer);
+    if (!modal) return;
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-edit-source-save')?.addEventListener('click', () => {
+        const newSb = [...modal.querySelectorAll('.phone-edit-source-check:checked')].map((cb) => cb.value);
+        c.sourceBook = newSb;
+        if (!c.bookName && newSb[0]) c.bookName = newSb[0];
+        State.save();
+        modal.remove();
+        toastr.success(`${name} 归属已更新`);
+        rerender();
+    });
 }
 
 function handleModelChange(model) { const s = State.load(); s.imageGen.currentModel = model; State.save(); toastr.success(`已切换到 ${model}`); }

@@ -943,6 +943,67 @@ img.wc-av { object-fit: cover; }
     color: #06ad56;
     font-weight: 600;
 }
+
+/* World-book scoped contacts UI (v0.10.4) */
+.phone-orphan-banner {
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+}
+.phone-orphan-text { font-size: 13px; color: #92400e; font-weight: 500; }
+.phone-orphan-actions { display: flex; gap: 8px; }
+.phone-orphan-actions .phone-btn { flex: 1; font-size: 12px; padding: 6px 10px; }
+.phone-btn-danger {
+    background: rgba(239, 68, 68, 0.12) !important;
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #b91c1c !important;
+}
+.phone-btn-danger:hover { background: rgba(239, 68, 68, 0.2) !important; }
+
+.phone-contacts-actions {
+    display: flex; gap: 8px; margin-bottom: 10px;
+}
+.phone-contacts-actions .phone-btn { flex: 1; font-size: 12px; padding: 8px; }
+
+.phone-contacts-bottom {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px dashed rgba(143, 184, 237, 0.3);
+}
+.phone-show-all-label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: #475569;
+    cursor: pointer; user-select: none;
+}
+.phone-show-all-label input { margin: 0; cursor: pointer; }
+
+/* 📍 contact source-book editor button — neutral */
+.phone-edit-source { font-size: 12px; padding: 4px 6px; }
+
+/* Modal lists for batch-assign / cross-world / per-contact source */
+.phone-orphan-list, .phone-cw-list {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 320px; overflow-y: auto;
+    padding: 4px; background: #fafafa; border-radius: 6px;
+}
+.phone-orphan-row, .phone-cw-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; background: #fff;
+    border: 1px solid #e5e7eb; border-radius: 4px;
+    font-size: 12px;
+}
+.phone-orphan-name, .phone-cw-name { flex: 1; font-weight: 500; min-width: 0; word-break: break-word; }
+.phone-orphan-select { flex: 1.2; min-width: 0; padding: 4px 6px; font-size: 12px; }
+.phone-cw-source { font-size: 11px; color: #6b7280; }
+.phone-orphan-batch {
+    display: flex; gap: 6px; align-items: center;
+    margin-top: 10px; padding: 8px; background: #f3f4f6; border-radius: 6px;
+    font-size: 12px;
+}
+.phone-orphan-batch select { flex: 1; min-width: 0; padding: 4px 6px; font-size: 12px; }
+.phone-orphan-batch label { white-space: nowrap; color: #475569; }
 .phone-wb-comment { font-weight: 600; color: #1e293b; }
 .phone-wb-preview { font-size: 11px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -1135,6 +1196,31 @@ img.wc-av { object-fit: cover; }
     .bubble-edit-pencil { width: 32px; height: 32px; font-size: 14px; bottom: 6px; right: 8px; }
     .bubble-edit-textarea { font-size: 16px; min-height: 70px; padding: 10px 12px; }
     .bubble-edit-cancel, .bubble-edit-save { padding: 8px 16px; font-size: 14px; min-height: 36px; }
+
+    /* World-book scoped contacts UI (v0.10.4) — mobile tap targets */
+    .phone-orphan-banner { padding: 12px; }
+    .phone-orphan-text { font-size: 14px; }
+    .phone-orphan-actions .phone-btn { font-size: 14px; padding: 10px; min-height: 40px; }
+    .phone-contacts-actions .phone-btn { font-size: 14px; padding: 10px; min-height: 40px; }
+    .phone-show-all-label { font-size: 14px; padding: 8px 0; }
+    .phone-show-all-label input { width: 18px; height: 18px; }
+    .phone-edit-source { font-size: 14px; padding: 8px 10px; min-width: 36px; min-height: 36px; }
+    .phone-orphan-row, .phone-cw-row {
+        padding: 10px; font-size: 14px;
+        flex-wrap: wrap;            /* allow checkbox + name + select to stack on narrow screens */
+        gap: 10px;
+    }
+    .phone-orphan-row input[type="checkbox"],
+    .phone-cw-row input[type="checkbox"] { width: 22px; height: 22px; }
+    .phone-orphan-select, .phone-orphan-batch select {
+        font-size: 16px;             /* prevent iOS auto-zoom */
+        padding: 8px; min-height: 40px;
+    }
+    .phone-orphan-batch { padding: 12px; gap: 8px; flex-wrap: wrap; }
+    .phone-orphan-batch label { width: 100%; font-size: 13px; }
+    .phone-orphan-batch select { flex: 1; }
+    .phone-orphan-batch button { min-height: 40px; padding: 8px 14px; font-size: 14px; }
+    .phone-orphan-list, .phone-cw-list { max-height: 50vh; }
 
     /* —— P0 缺漏补充（Android 适配）—— */
 
