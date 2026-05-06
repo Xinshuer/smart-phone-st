@@ -831,6 +831,35 @@ async function handleComfyuiTest() {
 // Image slot dispatch
 // ─────────────────────────────────────────────────────────────────────────
 
+function openImageLightbox(src) {
+    if (document.getElementById('sp-lightbox')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'sp-lightbox';
+    overlay.setAttribute('style', [
+        'position: fixed !important',
+        'top: 0 !important', 'left: 0 !important',
+        'width: 100% !important', 'height: 100% !important',
+        'background: rgba(0,0,0,0.92) !important',
+        'z-index: 2147483645 !important',
+        'display: flex !important',
+        'align-items: center !important',
+        'justify-content: center !important',
+        'cursor: zoom-out !important',
+        'touch-action: pinch-zoom !important',
+    ].join('; '));
+    const img = document.createElement('img');
+    img.src = src;
+    img.setAttribute('style', 'max-width:100%;max-height:100%;object-fit:contain;touch-action:pinch-zoom');
+    overlay.appendChild(img);
+    overlay.addEventListener('click', () => overlay.remove());
+    (document.documentElement || document.body).appendChild(overlay);
+}
+
+function attachPicClick(slot, url) {
+    const img = slot.querySelector('img');
+    if (img) img.addEventListener('click', () => openImageLightbox(url));
+}
+
 function triggerPicSlots(screen) {
     const slots = screen.querySelectorAll('.phone-image-slot[data-pic]:not([data-loaded])');
     if (!slots.length) return;
@@ -842,7 +871,9 @@ function triggerPicSlots(screen) {
 
         // Serve cached URL immediately — no regeneration on tab switch or re-render
         if (picUrlCache.has(picTag)) {
-            slot.innerHTML = `<img src="${escapeHtml(picUrlCache.get(picTag))}" class="phone-pic">`;
+            const url = picUrlCache.get(picTag);
+            slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
+            attachPicClick(slot, url);
             return;
         }
 
@@ -854,6 +885,7 @@ function triggerPicSlots(screen) {
             });
             if (url) {
                 slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
+                attachPicClick(slot, url);
                 picUrlCache.set(picTag, url);
             } else slot.textContent = '📷 生成失败';
         } catch (err) {
