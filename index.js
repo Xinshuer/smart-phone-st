@@ -1092,9 +1092,13 @@ function triggerPicSlots(screen) {
     slots.forEach(async (slot) => {
         slot.setAttribute('data-loaded', '1');
         const picTag = slot.dataset.pic;
-        // data-hint carries the post author name; falls back to currentThread for message view
+        // data-hint: post author name (social handle or contact name)
+        // data-context: post title+body — resolveContact scans it for known contact names
         const hintName = slot.dataset.hint;
-        const hint = hintName ? { from: hintName } : (currentThread ? { from: currentThread } : {});
+        const hintContext = slot.dataset.context || '';
+        const hint = hintName
+            ? { from: hintName, context: hintContext }
+            : (currentThread ? { from: currentThread, context: hintContext } : { context: hintContext });
 
         const cached = picUrlCache.get(picTag);
 
