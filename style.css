@@ -704,10 +704,31 @@ img.wc-av { object-fit: cover; }
     margin-bottom: 12px;
 }
 .phone-settings-section h3 { font-size: 14px; margin: 0 0 8px; color: #1e293b; }
-.phone-settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.phone-settings-header h3 { margin: 0; }
-.phone-section-toggle { background: none; border: none; cursor: pointer; font-size: 12px; color: #94a3b8; padding: 2px 6px; line-height: 1; flex-shrink: 0; }
-.phone-section-toggle:hover { color: #475569; }
+.phone-settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+    cursor: pointer;             /* whole header clickable to fold/unfold */
+    user-select: none;
+    padding: 4px 0;
+    border-radius: 4px;
+}
+.phone-settings-header:hover { background: rgba(143, 184, 237, 0.08); }
+.phone-settings-header h3 { margin: 0; flex: 1; }
+.phone-section-toggle {
+    background: rgba(143, 184, 237, 0.15);
+    border: 1px solid rgba(143, 184, 237, 0.3);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    color: #475569;
+    width: 28px; height: 28px;
+    line-height: 1;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    margin-left: 8px;
+    font-weight: bold;
+}
+.phone-section-toggle:hover { background: rgba(143, 184, 237, 0.3); color: #1e293b; }
 .phone-section-body.phone-collapsed { display: none; }
 .phone-wb-meta { font-size: 10px; color: #64748b; margin: 2px 0; }
 .phone-list-preview.empty { color: #cbd5e1; font-style: italic; }
