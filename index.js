@@ -22,10 +22,10 @@ import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
 import { renderMessageList, renderThread, renderMessagesSubTabs, renderContactsTab } from './lib/apps/messages.js';
-import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumDetailId } from './lib/apps/forum.js';
+import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumDetailId, BOARDS as FORUM_BOARDS } from './lib/apps/forum.js';
 import { renderMoments, bindMomentsHandlers, setMomentsView as momentsSetView } from './lib/apps/moments.js';
 import { generateContactMoments, generateMomentReplies } from './lib/moments-api.js';
-import { renderXHS, bindXHSHandlers, getActiveView as xhsView, setView as xhsSetView } from './lib/apps/xhs.js';
+import { renderXHS, bindXHSHandlers, getActiveView as xhsView, setView as xhsSetView, TAGS as XHS_TAGS } from './lib/apps/xhs.js';
 import { renderSettings, bindSettingsHandlers, entryToContact } from './lib/apps/settings.js';
 import { escapeHtml } from './lib/util.js';
 
@@ -42,6 +42,32 @@ let currentMessagesSubTab = 'chats'; // 'chats' | 'contacts'
 // Key = full picTag string (unique per prompt), value = resolved imageUrl.
 // Prevents re-generation when switching tabs or when new messages arrive.
 const picUrlCache = new Map();
+
+// ─────────────────────────────────────────────────────────────────────────
+// Selection mode (Phase B) — long-press + 🗂 button to multi-select chat images
+// for forward (Phase C) or command-character (Phase D).
+//
+// Scope rule: only chat thread images (inside #phone-thread-body) can be selected.
+// Selection clears on thread change or app tab change.
+// ─────────────────────────────────────────────────────────────────────────
+let selectionMode = false;
+const selectedImageUrls = new Set();   // ordered insertion = ordered forward
+let selectionScopeThread = null;        // contact name when selection started
+
+// Long-press tracking
+let lpTimer = null;
+let lpStartXY = null;
+let lpCellWhileTimer = null;
+let suppressNextClick = false; // set after long-press fires; eats the trailing click that would otherwise undo the selection
+const LP_DELAY_MS = 500;
+const LP_MOVE_CANCEL_PX = 10;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pending command-character post (Phase D)
+// Set when user submits the command modal; consumed in onMessageReceived when AI returns.
+// Cleared on thread change. Module-level — survives tab switches but not page reloads.
+// ─────────────────────────────────────────────────────────────────────────
+let pendingPostCommand = null; // { platform, targetName, time, imageUrls: [] }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Init
@@ -177,6 +203,15 @@ function injectPhoneShell() {
                     <span class="smart-phone-icons">●●● 📶 🔋</span>
                 </div>
                 <div class="smart-phone-screen" id="smart-phone-screen"></div>
+                <div id="phone-selection-toolbar" class="phone-sel-toolbar" style="display:none">
+                    <button id="phone-sel-cancel" class="phone-sel-cancel" title="退出多选">✕</button>
+                    <span id="phone-sel-count" class="phone-sel-count">0 张已选</span>
+                    <div class="phone-sel-actions">
+                        <button class="phone-sel-action" data-target="moments" disabled>📤 朋友圈</button>
+                        <button class="phone-sel-action" data-target="forum" disabled>📤 论坛</button>
+                        <button class="phone-sel-action" data-target="xhs" disabled>📤 小红书</button>
+                    </div>
+                </div>
                 <div class="smart-phone-tabbar">
                     <button class="smart-phone-tab" data-app="messages">💬<small>消息</small></button>
                     <button class="smart-phone-tab" data-app="moments">👥<small>朋友圈</small></button>
@@ -189,9 +224,12 @@ function injectPhoneShell() {
         </div>
     `);
     phoneRoot = document.getElementById('smart-phone-shell');
+    bindGlobalEventDelegation(); // Phase B — long-press / click / selection toolbar
 
     $('.smart-phone-tab').on('click', (e) => {
         currentApp = e.currentTarget.dataset.app;
+        // Tab change clears selection mode (selection is scoped to a chat thread)
+        if (selectionMode) exitSelectionMode();
         currentThread = null;
         currentMessagesSubTab = 'chats';
         xhsSetView('feed');
@@ -333,7 +371,12 @@ async function rerender() {
         if (!currentThread) {
             if (currentMessagesSubTab === 'chats') {
                 screen.querySelectorAll('.phone-list-item').forEach((row) => {
-                    row.addEventListener('click', () => { currentThread = row.dataset.thread; rerender(); });
+                    row.addEventListener('click', () => {
+                        currentThread = row.dataset.thread;
+                        if (selectionMode) exitSelectionMode(); // entering new thread clears stale selection
+                        pendingPostCommand = null; // commands are scoped to a chat thread
+                        rerender();
+                    });
                 });
             } else {
                 // Contacts sub-tab handlers (same handlers as settings contacts section)
@@ -356,8 +399,22 @@ async function rerender() {
                 });
             }
         } else {
-            screen.querySelector('[data-back]')?.addEventListener('click', () => { currentThread = null; rerender(); });
+            screen.querySelector('[data-back]')?.addEventListener('click', () => {
+                currentThread = null;
+                if (selectionMode) exitSelectionMode();
+                pendingPostCommand = null;
+                rerender();
+            });
             screen.querySelector('#phone-reroll-btn')?.addEventListener('click', handleReroll);
+            // 🗂 multi-select toggle (alternative entry to long-press)
+            screen.querySelector('#phone-multiselect-btn')?.addEventListener('click', () => {
+                if (selectionMode) exitSelectionMode();
+                else enterSelectionMode();
+            });
+            // 📤 命令角色发帖 (Phase D)
+            screen.querySelector('#phone-cmd-post-btn')?.addEventListener('click', () => {
+                if (currentThread) openCommandPostModal(currentThread);
+            });
             const input = screen.querySelector('#phone-input');
             const sendBtn = screen.querySelector('#phone-send-btn');
             const send = () => handleSendSMS(input?.value?.trim() || '');
@@ -423,7 +480,21 @@ async function rerender() {
         });
     }
 
+    // Global reroll handler — single source of truth for all `.phone-img-reroll-btn` buttons
+    // emitted by renderImagesGrid. Replaces per-app onRerollPic wiring.
+    screen.querySelectorAll('.phone-img-reroll-btn').forEach((/** @type {HTMLButtonElement} */ btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const picTag = btn.dataset.pic;
+            if (picTag) rerollPicSlot(picTag);
+        });
+    });
+
     triggerPicSlots(screen);
+
+    // Re-apply .selected to cells whose URL is in the current selection set (selection survives re-render)
+    reapplySelectionToVisibleCells();
+    updateSelectionToolbar();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -434,7 +505,13 @@ function bindEvents() {
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onPromptReady);
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.MESSAGE_UPDATED, onMessageReceived); // re-parse on edits
-    eventSource.on(event_types.CHAT_CHANGED, () => { currentThread = null; xhsSetView('feed'); forumSetView('feed'); momentsSetView('feed'); rerender(); });
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        currentThread = null;
+        if (selectionMode) exitSelectionMode();
+        pendingPostCommand = null;
+        xhsSetView('feed'); forumSetView('feed'); momentsSetView('feed');
+        rerender();
+    });
 }
 
 function onPromptReady(eventData) {
@@ -457,9 +534,54 @@ async function onMessageReceived() {
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
     if (!parsed) return;
 
+    // Rescue <pic> tags the AI placed in prose (outside PHONE block) — assign them to SMS
+    // messages that don't already have a pic, so images still appear in the phone UI.
+    if (parsed.sms?.length) {
+        const PIC_RE = /<pic\b[^>]*\sprompt="[^"]*"[^>]*\/?>/gi;
+        const proseSection = Protocol.stripPhoneBlock(msg.mes);
+        const prosePics = [...proseSection.matchAll(PIC_RE)].map((m) => m[0]);
+        if (prosePics.length) {
+            let pi = 0;
+            for (const sms of parsed.sms) {
+                if (!sms.pic && pi < prosePics.length) sms.pic = prosePics[pi++];
+            }
+        }
+    }
+
     const chatId = ctx.chatId || 'default';
+
+    // Phase D — pending command-character post: splice user images into matching post & flag for auto-reply
+    const triggerInfos = []; // [{platform, postId}] for auto-reply after dispatch
+    if (pendingPostCommand) {
+        const cmd = pendingPostCommand;
+        let arr, label;
+        if (cmd.platform === '朋友圈') { arr = parsed.moments; label = '朋友圈'; }
+        else if (cmd.platform === '论坛')   { arr = parsed.forum;   label = '论坛'; }
+        else if (cmd.platform === '小红书') { arr = parsed.xhs;     label = '小红书'; }
+        if (arr && arr.length) {
+            // Fuzzy match — AI may drop title suffix etc. ("沈清瑶·仙盟盟主" → "沈清瑶")
+            const target = cmd.targetName || '';
+            let idx = arr.findIndex((p) => p.from === target);
+            if (idx === -1) idx = arr.findIndex((p) => p.from && (target.includes(p.from) || p.from.includes(target)));
+            // Last resort: take the first post (AI emitted exactly one post for our command)
+            if (idx === -1 && arr.length === 1) idx = 0;
+            if (idx !== -1) {
+                arr[idx].images = [...cmd.imageUrls];
+                arr[idx].pic = null;             // strict: only user-attached images
+                arr[idx].commandedByUser = true;  // marker for source flag in renderer
+                arr[idx].from = cmd.targetName;   // normalize FROM back to full contact name
+                if ('author' in arr[idx]) arr[idx].author = cmd.targetName;
+                if ('user' in arr[idx]) arr[idx].user = cmd.targetName;
+                triggerInfos.push({ platform: label, postId: arr[idx].id });
+                pendingPostCommand = null;
+            }
+        }
+    }
+
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
     if (parsed.moments?.length) State.appendMoments(chatId, parsed.moments);
+    if (parsed.forum?.length) State.appendForum(chatId, parsed.forum);
+    if (parsed.xhs?.length) State.appendXhs(chatId, parsed.xhs);
     // group / hongbao / voice currently routed into threads as well
     if (parsed.hongbao?.length) State.appendMessages(chatId, parsed.hongbao);
     if (parsed.voice?.length) State.appendMessages(chatId, parsed.voice);
@@ -476,17 +598,35 @@ async function onMessageReceived() {
         State.appendMessages(chatId, grouped);
     }
 
-    // Strip the <PHONE> block from displayed message
+    // After-dispatch: auto-trigger "吃瓜 NPC" / contacts comments for commanded posts (Phase D #7)
+    for (const info of triggerInfos) {
+        setTimeout(async () => {
+            try {
+                if (info.platform === '朋友圈') {
+                    const post = State.findMomentsPost(chatId, info.postId);
+                    const contacts = State.load().contacts;
+                    if (post) await generateMomentReplies(chatId, info.postId, post, contacts, ctx);
+                } else if (info.platform === '论坛') {
+                    const post = State.findForumPost(chatId, info.postId);
+                    if (post) await generatePostReplies(chatId, info.postId, post, ctx);
+                } else if (info.platform === '小红书') {
+                    await generateStrangerComments(chatId, info.postId, ctx);
+                }
+                rerender();
+            } catch (err) { console.error('[smart-phone] command-post auto-reply failed:', err); }
+        }, 600);
+    }
+
+    // Strip the <PHONE> block from displayed message — always show 📱 placeholder
+    // so prose from Mode B never leaks into the ST chat bubble.
     const stripped = Protocol.stripPhoneBlock(msg.mes);
     if (stripped !== msg.mes) {
-        const cleaned = stripped.replace(/<\/?[^>]+>/g, '').replace(/\s+/g, '').trim();
-        // Abstract-style: if the whole reply was phone-only, show a tiny placeholder
-        // so the chat doesn't show an empty bubble.
-        msg.mes = cleaned ? stripped : '📱';
+        msg.mes = '📱';
         try {
             const updateBlock = (await import('../../../../script.js')).updateMessageBlock;
             if (typeof updateBlock === 'function') updateBlock(idx, msg);
         } catch {}
+        try { await ctx.saveChat(); } catch {}
     }
 
     rerender();
@@ -581,7 +721,7 @@ async function handleMomentsRefresh() {
     else toastr.warning('生成失败（检查手机 API 配置）');
 }
 
-async function handleMomentsSubmit({ content }) {
+async function handleMomentsSubmit({ content, images = [] }) {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     const userName = ctx?.name1 || '我';
@@ -592,6 +732,7 @@ async function handleMomentsSubmit({ content }) {
         authorName: userName,
         content,
         pic: null,
+        images: images.length ? [...images] : undefined,
         location: null,
         likes: 0,
         likedByUser: false,
@@ -659,7 +800,7 @@ async function handleForumRefresh() {
     else toastr.warning('生成失败（检查手机 API 配置）');
 }
 
-async function handleForumSubmit({ title, content, board }) {
+async function handleForumSubmit({ title, content, board, images = [] }) {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     const userName = ctx?.name1 || '我';
@@ -674,6 +815,7 @@ async function handleForumSubmit({ title, content, board }) {
         title,
         content,
         pic: null,
+        images: images.length ? [...images] : undefined,
         likes: 0,
         replies: [],
         time,
@@ -709,7 +851,7 @@ async function handleForumReply(postId, text) {
 // XHS (小红书)
 // ─────────────────────────────────────────────────────────────────────────
 
-async function handleXhsSubmit({ title, body, tag }) {
+async function handleXhsSubmit({ title, body, tag, images = [] }) {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     const userName = ctx?.name1 || '我';
@@ -720,9 +862,11 @@ async function handleXhsSubmit({ title, body, tag }) {
         id: `xhs_user_${Date.now()}`,
         from: 'user',
         user: userName,
-        title: title || body.slice(0, 20) + (body.length > 20 ? '...' : ''),
-        body,
+        title: title || (body || '').slice(0, 20) + ((body || '').length > 20 ? '...' : ''),
+        body: body || '',
         tag,
+        pic: null,
+        images: images.length ? [...images] : undefined,
         likes: Math.floor(Math.random() * 90000) + 10000,
         likedByUser: false,
         comments: [],
@@ -854,7 +998,15 @@ async function handleGenerateAppearance(name, btn) {
 
 严格输出格式（只输出两行，不加任何其他文字）：
 APPEARANCE: [一行 booru tag，英文逗号分隔，必须 ≥100 个 tag]
-FULL: [APPEARANCE 前后加上质量词和构图词的完整 SD 正面 prompt，一行]
+FULL: [仅 = 通用质量词前缀 + APPEARANCE 内容，一行；**禁止**写场景/背景/光照/构图/视角/写实风格 tag]
+
+**FULL 严格规则（极其重要）**：
+- ✅ 只能含：通用质量词（masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details）+ APPEARANCE 全部 tag
+- ❌ 禁止背景：simple background / white background / studio / outdoor / indoor / scenery 等
+- ❌ 禁止光照：studio lighting / soft lighting / cinematic lighting / rim light / natural lighting 等
+- ❌ 禁止构图视角：upper body portrait / full body / looking at viewer / from above / from side / close-up / 1girl / solo 等
+- ❌ 禁止写实风格：photorealistic / hyperrealistic / ultra realistic / professional photography / detailed skin / depth of field / sharp focus 等
+- 理由：这些 tag 由具体帖子场景动态注入。FULL 只描述角色本身，不锁定姿势/环境/风格，否则帖子的市集/卧室/练功房场景会和 FULL 里的死 tag 打架。
 
 只用标准 Danbooru / NovelAI tag。严禁中式描述如 "jade-like skin"、"gentle gaze"、"phoenix crown"（要拆成 hair ornament, ornate, jeweled hair ornament）。原文没说的维度必须按世界观和气质推断填充，绝不留空。
 
@@ -870,12 +1022,12 @@ FULL: [APPEARANCE 前后加上质量词和构图词的完整 SD 正面 prompt，
                         content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸）：
 
 APPEARANCE: dark purple hair, deep purple hair, violet hair, gradient hair, very long hair, waist-length hair, flowing hair, silky hair, shiny hair, updo, high bun, hair bun, elegant updo, chinese hairstyle, golden hairpin, hair stick, hair ornament, ornate hair ornament, jeweled hair ornament, tassel hair ornament, gold accessories, hair flower, (purple eyes:1.3), violet eyes, amethyst eyes, bright eyes, sharp eyes, almond eyes, narrow eyes, tsurime, fox eyes, long eyelashes, double eyelid, eyeshadow, eyeliner, sparkling eyes, detailed eyes, beautiful eyes, fair skin, pale skin, white skin, porcelain skin, light skin, smooth skin, flawless skin, glowing skin, luminous skin, high cheekbones, delicate features, sharp jawline, oval face, beautiful face, perfect face, symmetrical face, thin lips, small mouth, delicate nose, light makeup, lipstick, blush, tall, tall female, long legs, slender, curvy, voluptuous, hourglass figure, mature body, perfect body, visible collarbones, (huge breasts:1.3), gigantic breasts, massive breasts, enormous breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, narrow waist, slim waist, thin waist, slender waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, beautiful legs, hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, long dress, flowing dress, wide sleeves, long sleeves, ornate clothing, embroidered pattern, gold embroidery, sash, jade pendant, jade necklace, brocade, mature female, adult, adult female, mature, elegant, regal, dignified, graceful, majestic, noble, aristocratic, refined, sophisticated, cold, mysterious, east asian, asian, oriental beauty
-FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, 1girl, solo, upper body portrait, looking at viewer, simple background, white background, studio lighting, professional photography, dark purple hair, deep purple hair, violet hair, gradient hair, very long hair, waist-length hair, flowing hair, silky hair, shiny hair, updo, high bun, hair bun, elegant updo, chinese hairstyle, golden hairpin, hair stick, hair ornament, ornate hair ornament, jeweled hair ornament, tassel hair ornament, gold accessories, hair flower, (purple eyes:1.3), violet eyes, amethyst eyes, bright eyes, sharp eyes, almond eyes, narrow eyes, tsurime, fox eyes, long eyelashes, double eyelid, eyeshadow, eyeliner, sparkling eyes, detailed eyes, beautiful eyes, fair skin, pale skin, white skin, porcelain skin, light skin, smooth skin, flawless skin, glowing skin, luminous skin, high cheekbones, delicate features, sharp jawline, oval face, beautiful face, perfect face, symmetrical face, thin lips, small mouth, delicate nose, light makeup, lipstick, blush, tall, tall female, long legs, slender, curvy, voluptuous, hourglass figure, mature body, perfect body, visible collarbones, (huge breasts:1.3), gigantic breasts, massive breasts, enormous breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, narrow waist, slim waist, thin waist, slender waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, beautiful legs, hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, long dress, flowing dress, wide sleeves, long sleeves, ornate clothing, embroidered pattern, gold embroidery, sash, jade pendant, jade necklace, brocade, mature female, adult, adult female, mature, elegant, regal, dignified, graceful, majestic, noble, aristocratic, refined, sophisticated, cold, mysterious, east asian, asian, oriental beauty, soft lighting, cinematic lighting, rim light, detailed skin, sharp focus, depth of field, photorealistic, hyperrealistic, ultra realistic
+FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, dark purple hair, deep purple hair, violet hair, gradient hair, very long hair, waist-length hair, flowing hair, silky hair, shiny hair, updo, high bun, hair bun, elegant updo, chinese hairstyle, golden hairpin, hair stick, hair ornament, ornate hair ornament, jeweled hair ornament, tassel hair ornament, gold accessories, hair flower, (purple eyes:1.3), violet eyes, amethyst eyes, bright eyes, sharp eyes, almond eyes, narrow eyes, tsurime, fox eyes, long eyelashes, double eyelid, eyeshadow, eyeliner, sparkling eyes, detailed eyes, beautiful eyes, fair skin, pale skin, white skin, porcelain skin, light skin, smooth skin, flawless skin, glowing skin, luminous skin, high cheekbones, delicate features, sharp jawline, oval face, beautiful face, perfect face, symmetrical face, thin lips, small mouth, delicate nose, light makeup, lipstick, blush, tall, tall female, long legs, slender, curvy, voluptuous, hourglass figure, mature body, perfect body, visible collarbones, (huge breasts:1.3), gigantic breasts, massive breasts, enormous breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, narrow waist, slim waist, thin waist, slender waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, beautiful legs, hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, long dress, flowing dress, wide sleeves, long sleeves, ornate clothing, embroidered pattern, gold embroidery, sash, jade pendant, jade necklace, brocade, mature female, adult, adult female, mature, elegant, regal, dignified, graceful, majestic, noble, aristocratic, refined, sophisticated, cold, mysterious, east asian, asian, oriental beauty
 
 示例 2 — 现代年轻女学生（浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服）：
 
 APPEARANCE: light purple hair, lavender hair, pastel purple hair, lilac hair, long hair, very long hair, wavy hair, loose hair, flowing hair, silky hair, glossy hair, side-swept hair, golden hair ribbon, jade hairpin, hair ornament, hair accessories, (purple eyes:1.2), light purple eyes, lavender eyes, bright eyes, sparkling eyes, lively eyes, phoenix eyes, almond eyes, upturned eyes, large eyes, long eyelashes, double eyelid, sparkly eyes, detailed eyes, beautiful eyes, fair skin, pale skin, light skin, white skin, smooth skin, flawless skin, glowing skin, soft skin, healthy skin, delicate features, pretty face, beautiful face, oval face, small nose, delicate nose, thin lips, small mouth, parted lips, light makeup, lip gloss, blush, young adult, teenage, youthful, young, slender, curvy, hourglass figure, perfect body, visible collarbones, slim, (huge breasts:1.3), gigantic breasts, massive breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, perky breasts, i-cup, narrow waist, slim waist, thin waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, long legs, beautiful legs, smooth legs, school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, plaid skirt, black skirt, neckerchief, ribbon tie, knee-high socks, white socks, school shoes, blazer, cardigan, casual clothes, young woman, teen, lively, cheerful, energetic, charming, attractive, cute, beautiful, pretty, east asian, asian
-FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, 1girl, solo, upper body portrait, looking at viewer, simple background, white background, studio lighting, professional photography, light purple hair, lavender hair, pastel purple hair, lilac hair, long hair, very long hair, wavy hair, loose hair, flowing hair, silky hair, glossy hair, side-swept hair, golden hair ribbon, jade hairpin, hair ornament, hair accessories, (purple eyes:1.2), light purple eyes, lavender eyes, bright eyes, sparkling eyes, lively eyes, phoenix eyes, almond eyes, upturned eyes, large eyes, long eyelashes, double eyelid, sparkly eyes, detailed eyes, beautiful eyes, fair skin, pale skin, light skin, white skin, smooth skin, flawless skin, glowing skin, soft skin, healthy skin, delicate features, pretty face, beautiful face, oval face, small nose, delicate nose, thin lips, small mouth, parted lips, light makeup, lip gloss, blush, young adult, teenage, youthful, young, slender, curvy, hourglass figure, perfect body, visible collarbones, slim, (huge breasts:1.3), gigantic breasts, massive breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, perky breasts, i-cup, narrow waist, slim waist, thin waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, long legs, beautiful legs, smooth legs, school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, plaid skirt, black skirt, neckerchief, ribbon tie, knee-high socks, white socks, school shoes, blazer, cardigan, casual clothes, young woman, teen, lively, cheerful, energetic, charming, attractive, cute, beautiful, pretty, east asian, asian, soft lighting, cinematic lighting, rim light, detailed skin, sharp focus, depth of field, photorealistic, hyperrealistic, ultra realistic
+FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, light purple hair, lavender hair, pastel purple hair, lilac hair, long hair, very long hair, wavy hair, loose hair, flowing hair, silky hair, glossy hair, side-swept hair, golden hair ribbon, jade hairpin, hair ornament, hair accessories, (purple eyes:1.2), light purple eyes, lavender eyes, bright eyes, sparkling eyes, lively eyes, phoenix eyes, almond eyes, upturned eyes, large eyes, long eyelashes, double eyelid, sparkly eyes, detailed eyes, beautiful eyes, fair skin, pale skin, light skin, white skin, smooth skin, flawless skin, glowing skin, soft skin, healthy skin, delicate features, pretty face, beautiful face, oval face, small nose, delicate nose, thin lips, small mouth, parted lips, light makeup, lip gloss, blush, young adult, teenage, youthful, young, slender, curvy, hourglass figure, perfect body, visible collarbones, slim, (huge breasts:1.3), gigantic breasts, massive breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, perky breasts, i-cup, narrow waist, slim waist, thin waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, long legs, beautiful legs, smooth legs, school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, plaid skirt, black skirt, neckerchief, ribbon tie, knee-high socks, white socks, school shoes, blazer, cardigan, casual clothes, young woman, teen, lively, cheerful, energetic, charming, attractive, cute, beautiful, pretty, east asian, asian
 
 —— 现在轮到你 ——
 角色设定（中文）：
@@ -1077,9 +1229,475 @@ function openImageLightbox(src) {
     (document.documentElement || document.body).appendChild(overlay);
 }
 
-function attachPicClick(slot, url) {
-    const img = slot.querySelector('img');
-    if (img) img.addEventListener('click', () => openImageLightbox(url));
+// attachPicClick removed — click handling unified into phoneRoot delegation (see bindGlobalEventDelegation).
+// applySelectionToResolvedCell — called after a phone-image-slot resolves to <img>, in case its URL
+// is in the active selection set (selection survives slot re-render).
+function applySelectionToResolvedCell(cell, url) {
+    if (!cell || !url) return;
+    if (selectionMode && selectedImageUrls.has(url)) {
+        cell.classList.add('selected');
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Selection helpers — Phase B
+// ─────────────────────────────────────────────────────────────────────────
+
+function getImageUrlFromCell(cell) {
+    if (!cell) return null;
+    // Prefer resolved <img>.src; fall back to looking at slot's known cache by data-pic
+    const img = cell.querySelector('img.phone-pic');
+    if (img?.src) return img.src;
+    const slot = cell.querySelector('.phone-image-slot');
+    if (slot?.dataset?.pic) {
+        const cached = picUrlCache.get(slot.dataset.pic);
+        if (typeof cached === 'string') return cached;
+    }
+    return null;
+}
+
+function isInChatScope(el) {
+    return !!el && !!el.closest && !!el.closest('#phone-thread-body');
+}
+
+function enterSelectionMode() {
+    if (selectionMode) return;
+    selectionMode = true;
+    selectionScopeThread = currentThread;
+    updateSelectionToolbar();
+}
+
+// Returns ordered list of resolved image URLs from current chat thread.
+// Used by command-post modal's image picker (only resolved cache entries).
+function getCurrentChatImageUrls() {
+    if (!currentThread) return [];
+    const ctx = getContext();
+    const cs = State.getChatState(ctx.chatId || 'default');
+    const msgs = cs.threads?.[currentThread] || [];
+    const out = [];
+    for (const m of msgs) {
+        if (!m.pic) continue;
+        const cached = picUrlCache.get(m.pic);
+        if (typeof cached === 'string') out.push(cached);
+    }
+    return out;
+}
+
+function exitSelectionMode() {
+    selectionMode = false;
+    selectionScopeThread = null;
+    selectedImageUrls.clear();
+    // Strip .selected from all cells
+    if (phoneRoot) phoneRoot.querySelectorAll('.phone-img-cell.selected').forEach((c) => c.classList.remove('selected'));
+    updateSelectionToolbar();
+}
+
+function toggleSelection(url, cell) {
+    if (!url) return;
+    if (selectedImageUrls.has(url)) {
+        selectedImageUrls.delete(url);
+        if (cell) cell.classList.remove('selected');
+    } else {
+        selectedImageUrls.add(url);
+        if (cell) cell.classList.add('selected');
+    }
+    if (selectedImageUrls.size === 0 && selectionMode) {
+        // Don't auto-exit — user might want to re-tap. They cancel via ✕.
+    }
+    updateSelectionToolbar();
+}
+
+function updateSelectionToolbar() {
+    if (!phoneRoot) return;
+    const tb = phoneRoot.querySelector('#phone-selection-toolbar');
+    if (!tb) return;
+    tb.style.display = selectionMode ? 'flex' : 'none';
+    const count = selectedImageUrls.size;
+    const countEl = tb.querySelector('#phone-sel-count');
+    if (countEl) countEl.textContent = `${count} 张已选`;
+    tb.querySelectorAll('.phone-sel-action').forEach((b) => {
+        b.disabled = count === 0;
+    });
+}
+
+function reapplySelectionToVisibleCells() {
+    if (!phoneRoot || !selectionMode) return;
+    phoneRoot.querySelectorAll('.phone-img-cell').forEach((cell) => {
+        const url = getImageUrlFromCell(cell);
+        if (url && selectedImageUrls.has(url)) cell.classList.add('selected');
+        else cell.classList.remove('selected');
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Global event delegation on phoneRoot — long-press + click for selection/lightbox
+// Called once after phoneRoot is created (in injectPhoneShell).
+// ─────────────────────────────────────────────────────────────────────────
+function bindGlobalEventDelegation() {
+    if (!phoneRoot) return;
+
+    const startLongPress = (e, point) => {
+        const cell = e.target.closest && e.target.closest('.phone-img-cell');
+        if (!cell || !isInChatScope(cell)) return;
+        // Don't start on reroll buttons
+        if (e.target.closest && e.target.closest('.phone-img-reroll-btn')) return;
+        lpStartXY = { x: point.clientX, y: point.clientY };
+        lpCellWhileTimer = cell;
+        // Visual feedback: cell shows "being pressed" state during 500ms wait
+        cell.classList.add('phone-img-cell-pressing');
+        if (lpTimer) clearTimeout(lpTimer);
+        lpTimer = setTimeout(() => {
+            const url = getImageUrlFromCell(lpCellWhileTimer);
+            if (url) {
+                if (!selectionMode) enterSelectionMode();
+                toggleSelection(url, lpCellWhileTimer);
+                suppressNextClick = true; // eat trailing click on touchend to avoid double-toggle
+                // Haptic confirmation — Android Chrome supports navigator.vibrate
+                try { navigator.vibrate && navigator.vibrate(50); } catch {}
+            }
+            if (lpCellWhileTimer) lpCellWhileTimer.classList.remove('phone-img-cell-pressing');
+            lpTimer = null;
+            lpCellWhileTimer = null;
+        }, LP_DELAY_MS);
+    };
+    const moveLongPress = (point) => {
+        if (!lpTimer || !lpStartXY) return;
+        const dx = Math.abs(point.clientX - lpStartXY.x);
+        const dy = Math.abs(point.clientY - lpStartXY.y);
+        if (dx > LP_MOVE_CANCEL_PX || dy > LP_MOVE_CANCEL_PX) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+            if (lpCellWhileTimer) lpCellWhileTimer.classList.remove('phone-img-cell-pressing');
+            lpCellWhileTimer = null;
+        }
+    };
+    const endLongPress = () => {
+        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+        if (lpCellWhileTimer) lpCellWhileTimer.classList.remove('phone-img-cell-pressing');
+        lpCellWhileTimer = null;
+    };
+
+    phoneRoot.addEventListener('touchstart', (e) => { if (e.touches[0]) startLongPress(e, e.touches[0]); }, { passive: true });
+    phoneRoot.addEventListener('touchmove',  (e) => { if (e.touches[0]) moveLongPress(e.touches[0]); }, { passive: true });
+    phoneRoot.addEventListener('touchend',   () => endLongPress(),   { passive: true });
+    phoneRoot.addEventListener('touchcancel',() => endLongPress(),   { passive: true });
+    phoneRoot.addEventListener('mousedown',  (e) => startLongPress(e, e));
+    phoneRoot.addEventListener('mousemove',  (e) => moveLongPress(e));
+    phoneRoot.addEventListener('mouseup',    () => endLongPress());
+
+    // Right-click on chat image → enter selection (desktop)
+    phoneRoot.addEventListener('contextmenu', (e) => {
+        const cell = e.target.closest && e.target.closest('.phone-img-cell');
+        if (!cell || !isInChatScope(cell)) return;
+        e.preventDefault();
+        const url = getImageUrlFromCell(cell);
+        if (!url) return;
+        if (!selectionMode) enterSelectionMode();
+        toggleSelection(url, cell);
+    });
+
+    // Click delegation: selection toggle in selection mode, otherwise lightbox.
+    phoneRoot.addEventListener('click', (e) => {
+        // Long-press fired moments ago — eat the trailing click so we don't toggle the same cell off
+        if (suppressNextClick) {
+            suppressNextClick = false;
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        // Reroll button has its own handler in rerender (with stopPropagation); skip here.
+        if (e.target.closest && e.target.closest('.phone-img-reroll-btn')) return;
+        const cell = e.target.closest && e.target.closest('.phone-img-cell');
+        const img = e.target.closest && e.target.closest('img.phone-pic');
+        if (!cell || !img) return;
+        // Only intercept clicks on chat-thread images for selection toggle.
+        // Clicks on moments/forum/xhs images always open lightbox (even while in selection mode).
+        if (selectionMode && isInChatScope(cell)) {
+            e.preventDefault();
+            e.stopPropagation();
+            const url = getImageUrlFromCell(cell);
+            if (url) toggleSelection(url, cell);
+            return;
+        }
+        if (img.src) openImageLightbox(img.src);
+    });
+
+    // Selection toolbar controls
+    phoneRoot.querySelector('#phone-sel-cancel')?.addEventListener('click', () => exitSelectionMode());
+    phoneRoot.querySelectorAll('.phone-sel-action').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            if (selectedImageUrls.size === 0) return;
+            const target = btn.dataset.target; // 'moments' / 'forum' / 'xhs'
+            const urls = [...selectedImageUrls];
+            openForwardModal(target, urls);
+        });
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Forward modal — Phase C
+// User selected N images, picked target platform → modal shows preview grid +
+// per-platform fields. On 发布: create user post with images attached, jump to feed.
+// ─────────────────────────────────────────────────────────────────────────
+function openForwardModal(target, initialImageUrls) {
+    if (document.getElementById('phone-forward-modal')) return; // already open
+
+    const titles = { moments: '转发到 朋友圈', forum: '转发到 论坛', xhs: '转发到 小红书' };
+    const modal = document.createElement('div');
+    modal.id = 'phone-forward-modal';
+    modal.className = 'phone-forward-modal';
+
+    // Local mutable copy of images so user can ✕ individuals in modal
+    let modalImages = [...initialImageUrls];
+
+    // Per-platform field HTML + state field IDs
+    function fieldsHTML() {
+        if (target === 'moments') {
+            return `<textarea id="pf-content" class="pf-textarea" rows="4" maxlength="500" placeholder="这一刻的想法…"></textarea>`;
+        }
+        if (target === 'forum') {
+            return `
+                <input id="pf-title" class="pf-input" type="text" maxlength="40" placeholder="标题（必填）">
+                <div id="pf-board-row" class="pf-chip-row">
+                    ${FORUM_BOARDS.map((b, i) => `<button type="button" class="pf-chip${i === 5 ? ' selected' : ''}" data-board="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('')}
+                </div>
+                <textarea id="pf-content" class="pf-textarea" rows="4" maxlength="500" placeholder="正文…"></textarea>
+            `;
+        }
+        // xhs
+        return `
+            <input id="pf-title" class="pf-input" type="text" maxlength="40" placeholder="标题（可选）">
+            <textarea id="pf-content" class="pf-textarea" rows="4" maxlength="500" placeholder="正文…"></textarea>
+            <div id="pf-tag-row" class="pf-chip-row">
+                ${XHS_TAGS.map((t, i) => `<button type="button" class="pf-chip${i === 0 ? ' selected' : ''}" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</button>`).join('')}
+            </div>
+        `;
+    }
+
+    function imagesHTML() {
+        return modalImages.map((url, i) => `
+            <div class="pf-img-cell">
+                <img src="${escapeHtml(url)}">
+                <button type="button" class="pf-img-remove" data-idx="${i}" title="移除">✕</button>
+            </div>
+        `).join('');
+    }
+
+    modal.innerHTML = `
+        <div class="phone-forward-card">
+            <div class="phone-forward-header">
+                <span>${titles[target] || '转发'}</span>
+                <button type="button" class="phone-forward-close" title="关闭">✕</button>
+            </div>
+            <div class="phone-forward-body">
+                <div id="pf-images" class="pf-images">${imagesHTML()}</div>
+                <div class="phone-forward-fields">${fieldsHTML()}</div>
+            </div>
+            <div class="phone-forward-footer">
+                <button type="button" class="phone-forward-cancel">取消</button>
+                <button type="button" class="phone-forward-submit">发布</button>
+            </div>
+        </div>
+    `;
+    (phoneRoot || document.body).appendChild(modal);
+
+    function close() { modal.remove(); }
+
+    function rerenderImages() {
+        const container = modal.querySelector('#pf-images');
+        if (!container) return;
+        container.innerHTML = imagesHTML();
+        wireImageRemoveButtons();
+    }
+
+    function wireImageRemoveButtons() {
+        modal.querySelectorAll('.pf-img-remove').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.idx, 10);
+                if (Number.isInteger(idx)) {
+                    modalImages.splice(idx, 1);
+                    if (modalImages.length === 0) {
+                        toastr.warning('图片为空');
+                        close();
+                        return;
+                    }
+                    rerenderImages();
+                }
+            });
+        });
+    }
+    wireImageRemoveButtons();
+
+    // Chip selectors (board / tag)
+    modal.querySelectorAll('.pf-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            modal.querySelectorAll('.pf-chip').forEach((c) => c.classList.remove('selected'));
+            chip.classList.add('selected');
+        });
+    });
+
+    modal.querySelector('.phone-forward-close')?.addEventListener('click', close);
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', close);
+
+    modal.querySelector('.phone-forward-submit')?.addEventListener('click', async () => {
+        const content = modal.querySelector('#pf-content')?.value?.trim() || '';
+        const title = modal.querySelector('#pf-title')?.value?.trim() || '';
+
+        if (target === 'moments') {
+            // Caption optional; allow empty caption with images
+            await handleMomentsSubmit({ content, images: modalImages });
+        } else if (target === 'forum') {
+            if (!title) { toastr.warning('请填写标题'); return; }
+            const board = modal.querySelector('#pf-board-row .pf-chip.selected')?.dataset.board || '日常吧';
+            await handleForumSubmit({ title, content, board, images: modalImages });
+        } else if (target === 'xhs') {
+            const tag = modal.querySelector('#pf-tag-row .pf-chip.selected')?.dataset.tag || '日常';
+            await handleXhsSubmit({ title, body: content, tag, images: modalImages });
+        }
+
+        close();
+        exitSelectionMode();
+        // Jump to target app
+        currentApp = target;
+        if (target === 'forum') forumSetView('feed');
+        else if (target === 'xhs') xhsSetView('feed');
+        else if (target === 'moments') momentsSetView('feed');
+        rerender();
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Command-character post modal — Phase D
+// User picks platform + selects images from current chat + types instruction.
+// Sends OOC to ST AI; pending state set for splice on AI response.
+// ─────────────────────────────────────────────────────────────────────────
+function openCommandPostModal(targetName) {
+    if (document.getElementById('phone-cmdpost-modal')) return;
+
+    const allChatImages = getCurrentChatImageUrls();
+    let pickedImages = new Set(); // local selection state for this modal
+    let selectedPlatform = '朋友圈';
+
+    const modal = document.createElement('div');
+    modal.id = 'phone-cmdpost-modal';
+    modal.className = 'phone-forward-modal';
+
+    function imagePickerHTML() {
+        if (allChatImages.length === 0) {
+            return `<div class="pf-cmd-empty">当前对话没有可选图片<br><small>先生成几张再来</small></div>`;
+        }
+        return `<div class="pf-cmd-image-grid">${allChatImages.map((url, i) => `
+            <div class="pf-img-cell pf-cmd-img-cell${pickedImages.has(url) ? ' selected' : ''}" data-url="${escapeHtml(url)}">
+                <img src="${escapeHtml(url)}">
+            </div>
+        `).join('')}</div>`;
+    }
+
+    function rerenderPicker() {
+        const c = modal.querySelector('#pf-cmd-image-area');
+        if (c) c.innerHTML = imagePickerHTML();
+        wirePickerCells();
+    }
+
+    function wirePickerCells() {
+        modal.querySelectorAll('.pf-cmd-img-cell').forEach((cell) => {
+            cell.addEventListener('click', () => {
+                const url = cell.dataset.url;
+                if (!url) return;
+                if (pickedImages.has(url)) {
+                    pickedImages.delete(url);
+                    cell.classList.remove('selected');
+                } else {
+                    pickedImages.add(url);
+                    cell.classList.add('selected');
+                }
+            });
+        });
+    }
+
+    modal.innerHTML = `
+        <div class="phone-forward-card">
+            <div class="phone-forward-header">
+                <span>命令 ${escapeHtml(targetName)} 发帖</span>
+                <button type="button" class="phone-forward-close" title="关闭">✕</button>
+            </div>
+            <div class="phone-forward-body">
+                <div class="pf-cmd-platform-row">
+                    <button type="button" class="pf-chip selected" data-platform="朋友圈">朋友圈</button>
+                    <button type="button" class="pf-chip" data-platform="论坛">论坛</button>
+                    <button type="button" class="pf-chip" data-platform="小红书">小红书</button>
+                </div>
+                <div class="pf-cmd-section-label">附图（点选；当前对话已生成的图片）</div>
+                <div id="pf-cmd-image-area">${imagePickerHTML()}</div>
+                <div class="pf-cmd-section-label">指令</div>
+                <textarea id="pf-cmd-instruction" class="pf-textarea" rows="4" maxlength="500"
+                    placeholder="例：写得轻佻一点，让所有人都看到你今天穿成什么样"></textarea>
+            </div>
+            <div class="phone-forward-footer">
+                <button type="button" class="phone-forward-cancel">取消</button>
+                <button type="button" class="phone-forward-submit">命令发送</button>
+            </div>
+        </div>
+    `;
+    (phoneRoot || document.body).appendChild(modal);
+
+    function close() { modal.remove(); }
+
+    wirePickerCells();
+
+    // Platform chips
+    modal.querySelectorAll('.pf-cmd-platform-row .pf-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            modal.querySelectorAll('.pf-cmd-platform-row .pf-chip').forEach((c) => c.classList.remove('selected'));
+            chip.classList.add('selected');
+            selectedPlatform = chip.dataset.platform;
+        });
+    });
+
+    modal.querySelector('.phone-forward-close')?.addEventListener('click', close);
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', close);
+
+    modal.querySelector('.phone-forward-submit')?.addEventListener('click', async () => {
+        const instruction = modal.querySelector('#pf-cmd-instruction')?.value?.trim() || '';
+        if (!instruction) { toastr.warning('请填写指令'); return; }
+        const imageUrls = [...pickedImages];
+        close();
+        await submitCommandPost({ targetName, platform: selectedPlatform, instruction, imageUrls });
+    });
+}
+
+async function submitCommandPost({ targetName, platform, instruction, imageUrls }) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const time = Protocol.nowHHMM();
+
+    // Visible bubble in chat showing what the user commanded
+    State.appendMessages(chatId, [{
+        from: targetName,
+        type: 'text',
+        content: `[命令她在${platform}发帖] ${instruction}${imageUrls.length ? `（附 ${imageUrls.length} 张图）` : ''}`,
+        time,
+        me: true,
+    }]);
+    rerender();
+
+    // Set pending state so onMessageReceived will splice user images into the AI's post
+    pendingPostCommand = { platform, targetName, time, imageUrls: [...imageUrls] };
+
+    // Send OOC via ST input → main chat AI
+    const ta = document.querySelector('#send_textarea');
+    if (!ta) {
+        toastr.error('找不到酒馆输入框');
+        pendingPostCommand = null;
+        return;
+    }
+    const ooc = Protocol.buildPostCommandOOC({
+        targetName, time, platform, instruction, imageCount: imageUrls.length,
+    });
+    const safeOoc = Protocol.makeRequestSafe(ooc);
+    ta.value = `📱 <Request: ${safeOoc}>`;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#send_but')?.click();
 }
 
 function triggerPicSlots(screen) {
@@ -1090,31 +1708,71 @@ function triggerPicSlots(screen) {
     slots.forEach(async (slot) => {
         slot.setAttribute('data-loaded', '1');
         const picTag = slot.dataset.pic;
+        // data-hint: post author name (social handle or contact name)
+        // data-context: post title+body — resolveContact scans it for known contact names
+        const hintName = slot.dataset.hint;
+        const hintContext = slot.dataset.context || '';
+        const hintSource = slot.dataset.source || '';
+        const isReroll = slot.dataset.reroll === '1';
+        if (isReroll) slot.removeAttribute('data-reroll');
+        const hint = hintName
+            ? { from: hintName, context: hintContext, source: hintSource, reroll: isReroll }
+            : (currentThread ? { from: currentThread, context: hintContext, source: hintSource, reroll: isReroll } : { context: hintContext, source: hintSource, reroll: isReroll });
 
-        // Serve cached URL immediately — no regeneration on tab switch or re-render
-        if (picUrlCache.has(picTag)) {
-            const url = picUrlCache.get(picTag);
-            slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
-            attachPicClick(slot, url);
+        const cached = picUrlCache.get(picTag);
+
+        // Already resolved — show immediately
+        if (typeof cached === 'string') {
+            slot.innerHTML = `<img src="${escapeHtml(cached)}" class="phone-pic">`;
+            applySelectionToResolvedCell(slot.closest('.phone-img-cell'), cached);
             return;
         }
 
+        // In-flight Promise — await the same request instead of firing a duplicate
+        if (cached instanceof Promise) {
+            try {
+                const url = await cached;
+                if (url) { slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`; applySelectionToResolvedCell(slot.closest('.phone-img-cell'), url); }
+                else slot.textContent = '📷 生成失败';
+            } catch (err) { slot.textContent = `📷 ${err.message || err}`; }
+            return;
+        }
+
+        // Not cached — start generation and store the Promise immediately to block duplicates
+        const promise = window.smartImageGen.generateFromPicTag(picTag, {
+            contacts: State.load().contacts,
+            hint,
+        }).then((url) => { picUrlCache.set(picTag, url); return url; })
+          .catch((err) => { picUrlCache.delete(picTag); throw err; });
+        picUrlCache.set(picTag, promise);
+
         try {
-            const url = await window.smartImageGen.generateFromPicTag(picTag, {
-                contacts: State.load().contacts,
-                // Pass current thread name so locked character seeds are applied
-                hint: currentThread ? { from: currentThread } : {},
-            });
+            const url = await promise;
             if (url) {
                 slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
-                attachPicClick(slot, url);
-                picUrlCache.set(picTag, url);
+                applySelectionToResolvedCell(slot.closest('.phone-img-cell'), url);
             } else slot.textContent = '📷 生成失败';
         } catch (err) {
             console.error(err);
             slot.textContent = `📷 ${err.message || err}`;
         }
     });
+}
+
+function rerollPicSlot(picTag) {
+    picUrlCache.delete(picTag);
+    const screen = phoneRoot?.querySelector('#smart-phone-screen');
+    if (!screen) return;
+    // Find the slot by its data-pic value, mark it for reroll, and reset so triggerPicSlots will re-process it.
+    // The reroll flag tells generateFromPicTag to ignore the locked seed → produces a different image.
+    screen.querySelectorAll('.phone-image-slot[data-pic]').forEach((slot) => {
+        if (slot.dataset.pic === picTag) {
+            slot.removeAttribute('data-loaded');
+            slot.dataset.reroll = '1';
+            slot.innerHTML = '📷 生成中…';
+        }
+    });
+    triggerPicSlots(screen);
 }
 
 // Public API for image-gen extension

@@ -425,6 +425,223 @@ img.wc-av { object-fit: cover; }
 .tb-floor-author { font-size: 13px; font-weight: 600; color: #0b72df; margin-bottom: 4px; }
 .tb-floor-content { font-size: 13px; color: #333; line-height: 1.6; word-break: break-word; }
 .tb-floor-meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 11px; color: #999; flex-wrap: wrap; }
+/* (forum-reroll-row / .forum-reroll-pic-btn removed v0.10.0 — unified into .phone-img-reroll-btn) */
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Multi-image grid (WeChat 朋友圈 style) — used by moments / forum / xhs
+   Layout follows: 1=large, 2=row, 3=row, 4=2×2, 5–9=3-col flow
+   ───────────────────────────────────────────────────────────────────────── */
+.phone-img-grid { display: grid; gap: 4px; margin-top: 6px; max-width: 240px; }
+.phone-img-grid-1 { grid-template-columns: 1fr; max-width: 200px; }
+.phone-img-grid-2 { grid-template-columns: repeat(2, 1fr); max-width: 220px; }
+.phone-img-grid-3 { grid-template-columns: repeat(3, 1fr); max-width: 240px; }
+.phone-img-grid-4 { grid-template-columns: repeat(2, 1fr); max-width: 180px; }
+.phone-img-grid-9 { grid-template-columns: repeat(3, 1fr); max-width: 240px; }
+
+.phone-img-cell {
+    position: relative;
+    aspect-ratio: 1 / 1;          /* square cells by default (2/3/4/5–9) */
+    overflow: hidden;
+    border-radius: 4px;
+    background: #f0f0f0;
+}
+.phone-img-grid-1 .phone-img-cell {
+    aspect-ratio: auto;            /* 1 image: keep original ratio, no forced crop */
+    max-height: 280px;
+}
+.phone-img-cell .phone-pic {
+    width: 100%; height: 100%;
+    object-fit: cover; cursor: pointer; display: block;
+    /* Suppress iOS Safari long-press image menu (save/copy) — interferes with selection-mode long-press */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.phone-img-grid-1 .phone-img-cell .phone-pic {
+    height: auto; max-height: 280px; object-fit: contain;
+}
+.phone-img-cell .phone-image-slot {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #999; background: rgba(143, 184, 237, 0.08);
+}
+.phone-img-grid-1 .phone-img-cell .phone-image-slot {
+    min-height: 120px;
+}
+.phone-img-reroll-btn {
+    position: absolute; top: 4px; right: 4px;
+    background: rgba(0, 0, 0, 0.55); color: #fff;
+    border: none; border-radius: 50%;
+    width: 22px; height: 22px;
+    font-size: 11px; line-height: 1; padding: 0;
+    cursor: pointer; z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+}
+.phone-img-reroll-btn:hover { background: rgba(0, 0, 0, 0.75); }
+
+/* Selection mode (Phase B) */
+.phone-img-cell.selected { outline: 3px solid #07c160; outline-offset: -3px; }
+/* Long-press in-progress visual — pulsing dim while 500ms timer is waiting (mobile feedback) */
+.phone-img-cell-pressing {
+    animation: phone-img-press-pulse 0.5s ease-out forwards;
+}
+@keyframes phone-img-press-pulse {
+    0%   { filter: brightness(1);    transform: scale(1); }
+    100% { filter: brightness(0.78); transform: scale(0.96); }
+}
+.phone-img-cell.selected::after {
+    content: '✓'; position: absolute; top: 4px; left: 4px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #07c160; color: #fff; font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; pointer-events: none;
+}
+
+/* Selection toolbar (Phase B) — sits between screen and tabbar; only shown in selection mode */
+.phone-sel-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: #fafafa;
+    border-top: 1px solid #e5e7eb;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+.phone-sel-cancel {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid #d1d5db; background: #fff;
+    color: #6b7280; font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.phone-sel-cancel:hover { background: #f3f4f6; color: #1f2937; }
+.phone-sel-count { font-weight: 600; color: #1f2937; flex-shrink: 0; min-width: 70px; }
+.phone-sel-actions { display: flex; gap: 4px; flex: 1; justify-content: flex-end; }
+.phone-sel-action {
+    background: #07c160; color: #fff;
+    border: none; border-radius: 14px;
+    padding: 6px 10px; font-size: 12px;
+    cursor: pointer;
+}
+.phone-sel-action:hover:not(:disabled) { background: #06ad56; }
+.phone-sel-action:disabled { background: #d1d5db; cursor: not-allowed; opacity: 0.7; }
+
+/* Chat thread input bar — icon buttons (🗂 multi-select / 📤 command-post) */
+.phone-thread-icon-btn {
+    flex-shrink: 0;
+    width: 32px; height: 32px;
+    border: none; background: transparent;
+    color: #6b7280; font-size: 18px;
+    cursor: pointer; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+}
+.phone-thread-icon-btn:hover { background: rgba(0,0,0,0.06); color: #1f2937; }
+
+/* Forward modal (Phase C) — overlay inside phone shell with platform-specific form */
+.phone-forward-modal {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.phone-forward-card {
+    background: #fff; border-radius: 12px;
+    width: calc(100% - 32px); max-width: 320px;
+    max-height: calc(100% - 64px);
+    display: flex; flex-direction: column;
+    overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.phone-forward-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 14px; border-bottom: 1px solid #e5e7eb;
+    font-weight: 600; font-size: 14px;
+}
+.phone-forward-close {
+    border: none; background: transparent; font-size: 16px;
+    color: #6b7280; cursor: pointer;
+    width: 24px; height: 24px;
+}
+.phone-forward-body {
+    padding: 12px 14px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+}
+.pf-images {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+}
+.pf-img-cell {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    border-radius: 4px; overflow: hidden;
+    background: #f3f4f6;
+}
+.pf-img-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pf-img-remove {
+    position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: #fff;
+    border: none; font-size: 10px; cursor: pointer; line-height: 1;
+    padding: 0; display: flex; align-items: center; justify-content: center;
+}
+.pf-img-remove:hover { background: rgba(0,0,0,0.85); }
+.phone-forward-fields { display: flex; flex-direction: column; gap: 8px; }
+.pf-input, .pf-textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid #d1d5db; border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+    box-sizing: border-box;
+}
+.pf-textarea { resize: vertical; min-height: 70px; }
+.pf-chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.pf-chip {
+    padding: 4px 10px; font-size: 12px;
+    border: 1px solid #d1d5db; border-radius: 12px;
+    background: #fff; color: #6b7280; cursor: pointer;
+}
+.pf-chip.selected { background: #07c160; color: #fff; border-color: #07c160; }
+.phone-forward-footer {
+    display: flex; gap: 8px; padding: 10px 14px;
+    border-top: 1px solid #e5e7eb;
+    justify-content: flex-end;
+}
+.phone-forward-cancel, .phone-forward-submit {
+    padding: 6px 14px; font-size: 13px; cursor: pointer;
+    border-radius: 6px; border: 1px solid;
+}
+.phone-forward-cancel {
+    background: #fff; border-color: #d1d5db; color: #374151;
+}
+.phone-forward-cancel:hover { background: #f9fafb; }
+.phone-forward-submit {
+    background: #07c160; border-color: #07c160; color: #fff;
+}
+.phone-forward-submit:hover { background: #06ad56; }
+
+/* Command-character post modal extras (Phase D) */
+.pf-cmd-platform-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.pf-cmd-section-label { font-size: 11px; color: #6b7280; margin-top: 4px; }
+.pf-cmd-image-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    max-height: 180px; overflow-y: auto;
+    padding: 4px;
+    background: #f9fafb; border-radius: 6px;
+}
+.pf-cmd-img-cell { cursor: pointer; }
+.pf-cmd-img-cell.selected { outline: 3px solid #07c160; outline-offset: -3px; }
+.pf-cmd-img-cell.selected::after {
+    content: '✓'; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #07c160; color: #fff; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; pointer-events: none;
+}
+.pf-cmd-empty {
+    padding: 30px 12px; text-align: center;
+    color: #9ca3af; font-size: 12px;
+    background: #f9fafb; border-radius: 6px;
+}
 .tb-floor-time { color: #bbb; }
 .tb-replies { background: #f8f8f8; }
 
@@ -595,6 +812,8 @@ img.wc-av { object-fit: cover; }
 .xhs-detail-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; flex-shrink: 0; padding: 0; }
 .xhs-detail-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
 .xhs-detail-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+.xhs-detail-img-actions { display: flex; justify-content: flex-end; padding: 6px 10px; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
+/* (.xhs-reroll-pic-btn removed v0.10.0 — unified into .phone-img-reroll-btn) */
 .xhs-detail-content { padding: 14px 12px 8px; background: #fff; }
 .xhs-detail-title { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 6px; color: #1a1a1a; }
 .xhs-tag-pill { display: inline-block; color: #ff2442; font-size: 12px; margin-bottom: 10px; }
@@ -796,8 +1015,75 @@ img.wc-av { object-fit: cover; }
     /* Send button: 44px tap target */
     #phone-send-btn { width: 44px; height: 44px; font-size: 18px; }
 
+    /* 🗂 / 📤 thread icon buttons: larger tap target + bigger emoji on mobile */
+    .phone-thread-icon-btn { width: 44px; height: 44px; font-size: 22px; }
+
     /* Thread input area: more breathing room */
     .phone-thread-input { padding: 10px 12px; gap: 8px; }
+
+    /* Forward / command modals: prevent iOS auto-zoom (input/textarea ≥16px) */
+    .pf-input, .pf-textarea { font-size: 16px; padding: 10px 12px; }
+    .pf-chip { padding: 8px 14px; font-size: 13px; }
+    /* Reroll button on image cells: larger tap target on mobile */
+    .phone-img-reroll-btn { width: 28px; height: 28px; font-size: 13px; }
+    /* Selection toolbar action buttons: shorter labels + less padding so 3 fit on narrow screens */
+    .phone-sel-toolbar { flex-wrap: wrap; gap: 6px; padding: 8px 8px; }
+    .phone-sel-action { padding: 8px 10px; font-size: 12px; }
+    .phone-sel-cancel { width: 36px; height: 36px; }
+    .phone-sel-count { min-width: 60px; font-size: 12px; }
+    /* Forward modal: ensure footer buttons are tappable */
+    .phone-forward-cancel, .phone-forward-submit { padding: 10px 18px; font-size: 14px; min-height: 40px; }
+    .phone-forward-close { width: 36px; height: 36px; font-size: 18px; }
+    /* Image cells in command-post picker: bigger tap target by giving more spacing */
+    .pf-cmd-image-grid { padding: 6px; gap: 6px; }
+    /* Forward modal images preview: same */
+    .pf-img-remove { width: 24px; height: 24px; font-size: 12px; }
+
+    /* —— P0 缺漏补充（Android 适配）—— */
+
+    /* 朋友圈评论输入：原 12px / padding 5px，iOS 会放大 + Android 难点 */
+    .moments-comment-input { font-size: 16px; padding: 10px 12px; }
+    .moments-comment-send { min-width: 56px; min-height: 40px; padding: 8px 12px; font-size: 14px; }
+
+    /* 朋友圈发动态 textarea：原 14px，临界 */
+    .moments-compose-textarea { font-size: 16px; padding: 14px; }
+
+    /* 论坛贴吧板块按钮：原 12px padding 4px */
+    .tb-board-btn { font-size: 14px; padding: 8px 14px; min-height: 36px; }
+
+    /* 小红书 tag 按钮：原 11px padding 4px - 极小 */
+    .xhs-tag-btn { font-size: 13px; padding: 8px 14px; min-height: 36px; }
+
+    /* 头部导航图标按钮：原 16px 字号 padding 4-6px */
+    .tb-nav-icon, .xhs-nav-icon { font-size: 20px; padding: 10px 12px; min-width: 44px; min-height: 44px; }
+
+    /* moments 卡片互动按钮：保证 36px 触摸目标 */
+    .moments-like-btn, .moments-comment-btn { min-width: 36px; min-height: 36px; padding: 8px; }
+
+    /* —— P1 通用 Android 优化 —— */
+
+    /* 移除老 Android 300ms 点击延迟 + 防误触双击缩放 */
+    button, .phone-img-cell, .phone-list-item, .phone-msg-subtab,
+    .smart-phone-tab, .pf-chip, .moments-card, .tb-card, .xhs-card,
+    .phone-thread-icon-btn, .phone-sel-action {
+        touch-action: manipulation;
+    }
+
+    /* iOS Safari momentum scroll（Android Chrome 默认就有） */
+    .smart-phone-screen, .tb-feed, .moments-feed, .xhs-feed,
+    .tb-detail-body, .xhs-detail, .phone-thread-body,
+    .phone-forward-body {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* 通用 :active 反馈 — 点按瞬间发暗，比悬停态更适合移动端 */
+    button:active:not(:disabled),
+    .phone-img-cell:active,
+    .phone-list-item:active {
+        opacity: 0.7;
+        transition: opacity 0.05s;
+    }
+}
 
     /* Thread body: expand fill when shell is JS-sized */
     .phone-thread-body { height: calc(100% - 140px); }
