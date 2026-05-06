@@ -374,6 +374,7 @@ async function rerender() {
         bindXHSHandlers(screen, {
             onCompose: () => { xhsSetView('compose'); rerender(); },
             onRefresh: handleXhsRefresh,
+            onClear: handleXhsClear,
             onOpenPost: (id) => { xhsSetView('detail', id); rerender(); },
             onBackToFeed: () => { xhsSetView('feed'); rerender(); },
             onSubmit: handleXhsSubmit,
@@ -382,6 +383,7 @@ async function rerender() {
     if (currentApp === 'moments') {
         bindMomentsHandlers(screen, {
             onRefresh: handleMomentsRefresh,
+            onClear: handleMomentsClear,
             onCompose: () => { momentsSetView('compose'); rerender(); },
             onBackToFeed: () => { momentsSetView('feed'); rerender(); },
             onSubmit: handleMomentsSubmit,
@@ -392,6 +394,7 @@ async function rerender() {
     if (currentApp === 'forum') {
         bindForumHandlers(screen, {
             onRefresh: handleForumRefresh,
+            onClear: handleForumClear,
             onOpenPost: (id) => { forumSetView('detail', id); rerender(); },
             onBackToFeed: () => { forumSetView('feed'); rerender(); },
             onCompose: () => { forumSetView('compose'); rerender(); },
@@ -558,6 +561,13 @@ async function handleReroll() {
 // 朋友圈 (Moments)
 // ─────────────────────────────────────────────────────────────────────────
 
+async function handleMomentsClear() {
+    const ctx = getContext();
+    State.clearMoments(ctx.chatId || 'default');
+    rerender();
+    await handleMomentsRefresh();
+}
+
 async function handleMomentsRefresh() {
     const contacts = State.load().contacts;
     if (!contacts.length) { toastr.warning('请先在设置中导入联系人'); return; }
@@ -629,6 +639,13 @@ async function handleMomentsComment(postId, text) {
 // ─────────────────────────────────────────────────────────────────────────
 // 论坛 (贴吧)
 // ─────────────────────────────────────────────────────────────────────────
+
+async function handleForumClear() {
+    const ctx = getContext();
+    State.clearForum(ctx.chatId || 'default');
+    rerender();
+    await handleForumRefresh();
+}
 
 async function handleForumRefresh() {
     const ctx = getContext();
@@ -726,6 +743,13 @@ async function handleXhsSubmit({ title, body, tag }) {
             toastr.warning('未生成评论（检查手机 API 配置）');
         }
     }, 500);
+}
+
+async function handleXhsClear() {
+    const ctx = getContext();
+    State.clearXhs(ctx.chatId || 'default');
+    rerender();
+    await handleXhsRefresh();
 }
 
 async function handleXhsRefresh() {
