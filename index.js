@@ -64,24 +64,43 @@ function injectFloatingButton() {
 
 function makeButtonDraggable(btn) {
     let dragging = false, moved = false, offX = 0, offY = 0;
-    btn.addEventListener('mousedown', (e) => {
+
+    const start = (clientX, clientY) => {
         dragging = true; moved = false;
         const r = btn.getBoundingClientRect();
-        offX = e.clientX - r.left; offY = e.clientY - r.top;
-        e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
+        offX = clientX - r.left; offY = clientY - r.top;
+    };
+    const move = (clientX, clientY) => {
         if (!dragging) return;
         moved = true;
-        btn.style.left = (e.clientX - offX) + 'px';
-        btn.style.top = (e.clientY - offY) + 'px';
+        btn.style.left = (clientX - offX) + 'px';
+        btn.style.top = (clientY - offY) + 'px';
         btn.style.right = 'auto';
         btn.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', () => {
+    };
+    const end = () => {
         if (dragging && moved) btn.dataset.dragged = '1';
         dragging = false;
-    });
+    };
+
+    // Mouse
+    btn.addEventListener('mousedown', (e) => { start(e.clientX, e.clientY); e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+    document.addEventListener('mouseup', end);
+
+    // Touch
+    btn.addEventListener('touchstart', (e) => {
+        const t = e.touches[0];
+        start(t.clientX, t.clientY);
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+        if (!dragging) return;
+        const t = e.touches[0];
+        move(t.clientX, t.clientY);
+        e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', end);
+    document.addEventListener('touchcancel', end);
 }
 
 function injectMenuButton() {

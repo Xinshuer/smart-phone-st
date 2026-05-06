@@ -2,21 +2,23 @@
 
 #smart-phone-float-btn {
     position: fixed;
-    right: 20px;
-    bottom: 100px;
-    width: 48px;
-    height: 48px;
+    right: max(20px, env(safe-area-inset-right));
+    bottom: max(160px, calc(100px + env(safe-area-inset-bottom)));
+    width: 52px;
+    height: 52px;
     border-radius: 50%;
     background: linear-gradient(135deg, #93c5fd, #60a5fa);
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: 24px;
     cursor: pointer;
-    z-index: 9989;
+    z-index: 99998;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
     user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
     transition: transform 0.15s, box-shadow 0.15s;
 }
 #smart-phone-float-btn:hover {
@@ -31,7 +33,7 @@
     position: fixed;
     top: 80px;
     right: 24px;
-    z-index: 9990;
+    z-index: 99999;
     user-select: none;
 }
 
@@ -51,6 +53,34 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
+}
+
+/* ── Mobile: shell becomes near-fullscreen, larger button, escape ST chrome ── */
+@media (max-width: 768px), (pointer: coarse) {
+    #smart-phone-float-btn {
+        width: 56px;
+        height: 56px;
+        font-size: 28px;
+        right: max(16px, env(safe-area-inset-right));
+        bottom: max(180px, calc(120px + env(safe-area-inset-bottom)));
+    }
+    #smart-phone-shell {
+        top: max(8px, env(safe-area-inset-top));
+        right: max(8px, env(safe-area-inset-right));
+        left: max(8px, env(safe-area-inset-left));
+        bottom: max(8px, env(safe-area-inset-bottom));
+    }
+    .smart-phone-frame {
+        width: 100%;
+        height: 100%;
+        max-width: 420px;
+        max-height: 100%;
+        margin: 0 auto;
+        border-radius: 24px;
+        box-shadow:
+            0 8px 28px rgba(0, 0, 0, 0.4),
+            0 0 0 4px #1a1a1a;
+    }
 }
 
 .smart-phone-statusbar {
