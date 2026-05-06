@@ -478,17 +478,16 @@ async function onMessageReceived() {
         State.appendMessages(chatId, grouped);
     }
 
-    // Strip the <PHONE> block from displayed message
+    // Strip the <PHONE> block from displayed message — always show 📱 placeholder
+    // so prose from Mode B never leaks into the ST chat bubble.
     const stripped = Protocol.stripPhoneBlock(msg.mes);
     if (stripped !== msg.mes) {
-        const cleaned = stripped.replace(/<\/?[^>]+>/g, '').replace(/\s+/g, '').trim();
-        // Abstract-style: if the whole reply was phone-only, show a tiny placeholder
-        // so the chat doesn't show an empty bubble.
-        msg.mes = cleaned ? stripped : '📱';
+        msg.mes = '📱';
         try {
             const updateBlock = (await import('../../../../script.js')).updateMessageBlock;
             if (typeof updateBlock === 'function') updateBlock(idx, msg);
         } catch {}
+        try { await ctx.saveChat(); } catch {}
     }
 
     rerender();
