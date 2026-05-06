@@ -20,8 +20,9 @@ import * as State from './lib/state.js';
 import * as WB from './lib/worldbook.js';
 import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api.js';
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
+import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
 import { renderMessageList, renderThread, renderMessagesSubTabs, renderContactsTab } from './lib/apps/messages.js';
-import { renderForum } from './lib/apps/forum.js';
+import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumDetailId } from './lib/apps/forum.js';
 import { renderXHS, bindXHSHandlers, getActiveView as xhsView, setView as xhsSetView } from './lib/apps/xhs.js';
 import { renderSettings, bindSettingsHandlers, entryToContact } from './lib/apps/settings.js';
 import { escapeHtml } from './lib/util.js';
@@ -191,6 +192,7 @@ function injectPhoneShell() {
         currentThread = null;
         currentMessagesSubTab = 'chats';
         xhsSetView('feed');
+        forumSetView('feed');
         rerender();
     });
     $('.smart-phone-close').on('click', () => phoneRoot.classList.add('smart-phone-hidden'));
@@ -370,6 +372,16 @@ async function rerender() {
             onSubmit: handleXhsSubmit,
         });
     }
+    if (currentApp === 'forum') {
+        bindForumHandlers(screen, {
+            onRefresh: handleForumRefresh,
+            onOpenPost: (id) => { forumSetView('detail', id); rerender(); },
+            onBackToFeed: () => { forumSetView('feed'); rerender(); },
+            onCompose: () => { forumSetView('compose'); rerender(); },
+            onSubmit: handleForumSubmit,
+            onReply: (text) => handleForumReply(getForumDetailId(), text),
+        });
+    }
     if (currentApp === 'settings') {
         bindSettingsHandlers(screen, {
             onImportContact: handleImportContact,
@@ -523,6 +535,68 @@ async function handleReroll() {
         console.error('[smart-phone] reroll failed:', err);
         toastr.error('重新生成失败');
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 论坛 (贴吧)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleForumRefresh() {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    toastr.info('生成新帖子…');
+    const worldCtxEntries = State.getWorldContext();
+    let worldContextText = '';
+    if (worldCtxEntries.length) worldContextText = await WB.fetchWorldContextText(worldCtxEntries);
+    const posts = await generateFreshPosts(chatId, ctx, worldContextText);
+    if (posts.length) { toastr.success(`新增 ${posts.length} 条帖子`); rerender(); }
+    else toastr.warning('生成失败（检查手机 API 配置）');
+}
+
+async function handleForumSubmit({ title, content, board }) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const userName = ctx?.name1 || '我';
+    const time = Protocol.nowHHMM();
+    const now = new Date();
+    const dateStr = `${now.getMonth() + 1}-${now.getDate()}`;
+    const post = {
+        id: `tb_user_${Date.now()}`,
+        from: 'user',
+        board,
+        author: userName,
+        title,
+        content,
+        pic: null,
+        likes: 0,
+        replies: [],
+        time,
+        date: dateStr,
+    };
+    State.appendForum(chatId, [post]);
+    forumSetView('detail', post.id);
+    rerender();
+    toastr.info('正在生成网友回复…');
+    setTimeout(async () => {
+        const ok = await generatePostReplies(chatId, post.id, post, ctx);
+        if (ok) { toastr.success('回复已更新'); rerender(); }
+        else toastr.warning('未生成回复（检查手机 API 配置）');
+    }, 500);
+}
+
+async function handleForumReply(postId, text) {
+    if (!postId || !text) return;
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const userName = ctx?.name1 || '我';
+    const time = Protocol.nowHHMM();
+    State.appendForumReplies(chatId, postId, [{ from: 'user', author: userName, content: text, time }]);
+    rerender();
+    setTimeout(async () => {
+        const post = State.findForumPost(chatId, postId);
+        const ok = await generatePostReplies(chatId, postId, post, ctx);
+        if (ok) rerender();
+    }, 500);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
