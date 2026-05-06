@@ -1101,113 +1101,84 @@ async function handleGenerateAppearance(name, btn) {
                 messages: [
                     {
                         role: 'system',
-                        content: `你是顶级 Stable Diffusion / Danbooru tag 工程师。把中文角色设定转成最大化还原人设的英文 booru tag。
+                        content: `你是 SDXL / Danbooru tag 专家。把中文人设转成精准、紧凑的英文 booru tag。
 
-严格输出格式（只输出两行，不加任何其他文字）：
-APPEARANCE: [一行 booru tag，英文逗号分隔，必须 ≥120 个 tag]
-FULL: [仅 = 通用质量词前缀 + APPEARANCE 内容，一行；**禁止**写场景/背景/光照/构图/视角/写实风格 tag]
+**核心原则（违反 = 失败）**：
+1. **总量控制**：APPEARANCE 严格在 **55-75 个 tag** 之间。SDXL token 上限 75 一段，超过会被切段稀释，过量 tag 反而互相打架，画质崩坏。
+2. **不堆近义词**：每个特征**最多 2 个 tag**（1 主词 + 0-1 辅助）。要强调用加权 (tag:1.3)，**禁止**用 4-5 个近义词刷权重——模型会平均它们而不是叠加。
+3. **不冲突**：不能同时写 "slender, curvy, voluptuous, hourglass" 这种互相矛盾的体型词，挑 1-2 个最准的。
+4. **从原文出发**：原文没写就按世界观推断 1 个准确选项，**不要给 N 选 1 让模型猜**。
 
-**FULL 严格规则（极其重要）**：
-- ✅ 只能含：通用质量词（masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details）+ APPEARANCE 全部 tag
-- ❌ 禁止背景：simple background / white background / studio / outdoor / indoor / scenery 等
-- ❌ 禁止光照：studio lighting / soft lighting / cinematic lighting / rim light / natural lighting 等
-- ❌ 禁止构图视角：upper body portrait / full body / looking at viewer / from above / from side / close-up / 1girl / solo 等
-- ❌ 禁止写实风格：photorealistic / hyperrealistic / ultra realistic / professional photography / detailed skin / depth of field / sharp focus 等
-- 理由：这些 tag 由具体帖子场景动态注入。FULL 只描述角色本身，不锁定姿势/环境/风格，否则帖子的市集/卧室/练功房场景会和 FULL 里的死 tag 打架。
+**严格输出格式**（只输出两行，无前后缀）：
+APPEARANCE: [55-75 个英文 booru tag，逗号分隔]
+FULL: [质量词前缀 + APPEARANCE 内容；禁场景/光照/构图/视角/画风词]
 
-只用标准 Danbooru / NovelAI tag。严禁中式描述如 "jade-like skin"、"gentle gaze"、"phoenix crown"（要拆成 hair ornament, ornate, jeweled hair ornament）。原文没说的维度必须按世界观和气质推断填充，绝不留空。
+**FULL 内容白名单**（只能这两段）：
+- 质量词前缀：masterpiece, best quality, highres, absurdres, intricate details
+- APPEARANCE 全部 tag
 
-**必填维度（任何一项缺失 = 输出不合格）**：
+**FULL 黑名单**（出现一个 = 不合格）：
+- 背景：simple background / white background / studio / outdoor / indoor / scenery
+- 光照：studio lighting / soft lighting / cinematic lighting / natural lighting
+- 构图：upper body portrait / full body / looking at viewer / from above / close-up / 1girl / solo
+- 画风：photorealistic / hyperrealistic / anime style / illustration / detailed skin / depth of field / sharp focus
+- 理由：这些由帖子场景动态注入；FULL 只描人物本身，不锁场景/画风。
 
-1. **发型/发色（≥15 tag）**：
-   - 颜色：必填精确色（black/blonde/silver/platinum/red/auburn/blue/purple/lavender/pink 等）+ 同色多近义词强化（silver hair, white hair, platinum hair, ash hair）
-   - 长度：精确到具体（waist-length / hip-length / knee-length / shoulder-length / chin-length / pixie cut）
-   - 质感：≥3 个（silky / glossy / shiny / lustrous / flowing / messy / straight / wavy / curly / braided）
-   - 造型：精确发型（updo / high ponytail / twin tails / hime cut / side braid / french braid / hair bun / loose hair）
-   - 装饰：根据世界观必填（古风→hairpin / hair stick / tassel / jeweled hair ornament；现代→hair ribbon / hair clip / hairband）
+**七维度精简清单**（每维 N 个 tag，**严格遵守**）：
 
-2. **眼睛（必填，≥8 tag）**：
-   - 颜色精确（原文没写按发色/世界观推断；fox eyes/phoenix eyes 等形状暗示）
-   - 形状：almond eyes / phoenix eyes / fox eyes / round eyes / upturned eyes / narrow eyes / tsurime / tareme
-   - 修饰：long eyelashes / double eyelid / eyeshadow / eyeliner / sparkling eyes / detailed eyes
+| 维度 | tag 数 | 写法 |
+|------|--------|------|
+| 1. 发型 | 5-8 | 1 颜色（加权 1.3）+ 1 长度 + 1 质感 + 1 造型 + 1-2 装饰 |
+| 2. 眼睛 | 4-6 | 1 颜色（加权 1.3）+ 1 形状 + 1-2 修饰（long eyelashes 等）|
+| 3. 肤色 | 2-3 | 1 主色（fair/pale/tan/dark skin）+ 1 强化（porcelain/smooth/healthy） |
+| 4. 身材 | 12-18 | 1 身高 + 1 体型 + 胸（加权 1.3，1-2 词）+ 1 腰 + 1 臀 + 2-3 腿（**重点**）+ 1-2 其它 |
+| 5. 脸型 | 4-6 | 1 脸型 + 1 颧骨/下巴 + 1 鼻 + 1 唇 + 1-2 妆 |
+| 6. 服装 | 5-8 | 1 大类（hanfu/school uniform/business suit）+ 2-3 款式细节 + 1 材质 + 1-2 配饰 |
+| 7. 气质/年龄 | 3-5 | 1 年龄 + 1 种族 + 1-2 气质 |
 
-3. **肤色（≥6 tag）**：
-   - 主色：fair skin / pale skin / light skin / tan skin / dark skin（根据种族世界观选）
-   - 强化：≥4 个（porcelain skin / smooth skin / flawless skin / glowing skin / luminous skin / healthy skin / sun-kissed skin / dewy skin）
+**身材腿型重点（用户特别要求）**：长腿/美腿务必写到，但精简：
+- 长腿：long legs（可加权 1.2）
+- 大腿（按设定选）：thick thighs / thigh gap / slim thighs（**只选一个**）
+- 美感：beautiful legs（够了，不要再堆 smooth/shapely/model 等）
 
-4. **身材/胸/腰/臀/腿（极其重要，≥25 tag，分块详述）**：
-   - 整体身高：tall / short / petite / average height + tall female 等
-   - 体型：slender / curvy / voluptuous / hourglass figure / pear-shaped / athletic build / mature body / petite body
-   - 胸：原文有就按描述（flat chest / small breasts / medium breasts / large breasts / huge breasts / gigantic breasts / massive breasts），加权 (XXX breasts:1.3)；近义词 ≥4 个（busty / voluptuous breasts / heavy breasts / round breasts / perky breasts / sagging breasts）；形状 ≥2 个
-   - 腰：narrow waist / slim waist / thin waist / wasp waist
-   - 臀：wide hips / flared hips / curvy hips / plump hips / huge ass / big ass + 形状（round ass / heart-shaped ass）
-   - 腿（特别强调）：long legs / beautiful legs / smooth legs / shapely legs / model legs；大腿：thick thighs / plump thighs / thigh gap / slim thighs（按身材选）；小腿：toned calves
-   - 锁骨/肩：visible collarbones / delicate shoulders / sloping shoulders
-   - 比例：long torso / short torso / leg-to-body ratio
+**加权规则**：
+- 加权用 (tag:1.3)，**最多 4 个加权 tag**（建议：发色、眼睛、胸、长腿）
+- 加权值范围 1.1-1.4，超出会过度
+- **不**用近义词链刷权重（这是新手错误，效果反而差）
 
-5. **脸型/五官（≥10 tag）**：
-   - 脸型：oval face / round face / heart-shaped face / square face / V-line face
-   - 颧骨：high cheekbones / sharp cheekbones / soft cheekbones
-   - 下巴：sharp jawline / soft jawline / pointed chin / round chin
-   - 鼻：delicate nose / small nose / aquiline nose / upturned nose
-   - 唇：thin lips / full lips / plump lips / small mouth / heart-shaped lips
-   - 妆容：light makeup / lipstick / lip gloss / blush / eyeshadow
+**Danbooru 标准**：只用标准 booru tag，禁止中式描述（"jade-like skin"/"gentle gaze"/"phoenix crown"）。原文没写就按世界观给 1 个最合理选项。
 
-6. **服装（≥12 tag，必填，根据世界观/身份/出场场景推断）**：
-   - 古风/修仙：hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, wide sleeves, sash, jade pendant, cultivator robes, taoist robes
-   - 现代学生：school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, neckerchief, knee-high socks, blazer, cardigan
-   - 现代职场：business suit, white blouse, pencil skirt, suit jacket, stockings, high heels, business casual
-   - 现代休闲：casual clothes, t-shirt, jeans, dress, hoodie, jacket, sneakers
-   - 必含：款式（≥3）+ 颜色（≥2）+ 材质（silk/cotton/lace/leather）+ 花纹（embroidered/printed/striped/floral pattern）+ 配饰（necklace/earrings/bracelet/jade pendant）
-
-7. **气质/年龄/种族（≥6 tag）**：
-   - 年龄：teenage / young adult / mature female / adult female / older woman / middle-aged
-   - 种族：east asian / asian / western / european / oriental beauty
-   - 气质：elegant / regal / dignified / graceful / cute / charming / cold / mysterious / cheerful / lively / sultry / refined
-
-**画风风格 tag**：
-- 由于本扩展同时支持动漫模型（NoobAI/anime style）和写实模型（Pony Realism/majicMIX），FULL 中**不要**写 photorealistic / anime style 等画风词；让运行时根据所选模型注入。
-- 但如果原文角色设定明显属于某种风格（如"二次元"/"动漫感"/"赛璐璐"），可以写在 APPEARANCE 末尾的气质段（不进 FULL 时不会冲突）。
-
-**加权规则**：同一特征多写近义词强化（SD 对重复 tag 会增强权重）。关键特征用 (tag:1.3) 加权重，每段最多 2-3 个加权（建议加在：发色、眼睛、胸、关键服饰）。
-
-**禁止**：武器、职业技能、故事背景、性格心理描述（"温柔"/"冷漠"等情绪不写）、性行为描写、bgm/动作动词。`,
+**禁止内容**：武器、职业技能、故事背景、心理性格词（"温柔/冷漠/坚强"）、动作动词、bgm。`,
                     },
                     {
                         role: 'user',
                         content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸）：
 
-APPEARANCE: dark purple hair, deep purple hair, violet hair, gradient hair, very long hair, waist-length hair, flowing hair, silky hair, shiny hair, updo, high bun, hair bun, elegant updo, chinese hairstyle, golden hairpin, hair stick, hair ornament, ornate hair ornament, jeweled hair ornament, tassel hair ornament, gold accessories, hair flower, (purple eyes:1.3), violet eyes, amethyst eyes, bright eyes, sharp eyes, almond eyes, narrow eyes, tsurime, fox eyes, long eyelashes, double eyelid, eyeshadow, eyeliner, sparkling eyes, detailed eyes, beautiful eyes, fair skin, pale skin, white skin, porcelain skin, light skin, smooth skin, flawless skin, glowing skin, luminous skin, high cheekbones, delicate features, sharp jawline, oval face, beautiful face, perfect face, symmetrical face, thin lips, small mouth, delicate nose, light makeup, lipstick, blush, tall, tall female, long legs, slender, curvy, voluptuous, hourglass figure, mature body, perfect body, visible collarbones, (huge breasts:1.3), gigantic breasts, massive breasts, enormous breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, narrow waist, slim waist, thin waist, slender waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, beautiful legs, hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, long dress, flowing dress, wide sleeves, long sleeves, ornate clothing, embroidered pattern, gold embroidery, sash, jade pendant, jade necklace, brocade, mature female, adult, adult female, mature, elegant, regal, dignified, graceful, majestic, noble, aristocratic, refined, sophisticated, cold, mysterious, east asian, asian, oriental beauty
-FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, dark purple hair, deep purple hair, violet hair, gradient hair, very long hair, waist-length hair, flowing hair, silky hair, shiny hair, updo, high bun, hair bun, elegant updo, chinese hairstyle, golden hairpin, hair stick, hair ornament, ornate hair ornament, jeweled hair ornament, tassel hair ornament, gold accessories, hair flower, (purple eyes:1.3), violet eyes, amethyst eyes, bright eyes, sharp eyes, almond eyes, narrow eyes, tsurime, fox eyes, long eyelashes, double eyelid, eyeshadow, eyeliner, sparkling eyes, detailed eyes, beautiful eyes, fair skin, pale skin, white skin, porcelain skin, light skin, smooth skin, flawless skin, glowing skin, luminous skin, high cheekbones, delicate features, sharp jawline, oval face, beautiful face, perfect face, symmetrical face, thin lips, small mouth, delicate nose, light makeup, lipstick, blush, tall, tall female, long legs, slender, curvy, voluptuous, hourglass figure, mature body, perfect body, visible collarbones, (huge breasts:1.3), gigantic breasts, massive breasts, enormous breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, narrow waist, slim waist, thin waist, slender waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, beautiful legs, hanfu, chinese clothes, traditional chinese clothes, silk robes, embroidered robes, layered robes, long dress, flowing dress, wide sleeves, long sleeves, ornate clothing, embroidered pattern, gold embroidery, sash, jade pendant, jade necklace, brocade, mature female, adult, adult female, mature, elegant, regal, dignified, graceful, majestic, noble, aristocratic, refined, sophisticated, cold, mysterious, east asian, asian, oriental beauty
+APPEARANCE: (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
 
 示例 2 — 现代年轻女学生（浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服）：
 
-APPEARANCE: light purple hair, lavender hair, pastel purple hair, lilac hair, long hair, very long hair, wavy hair, loose hair, flowing hair, silky hair, glossy hair, side-swept hair, golden hair ribbon, jade hairpin, hair ornament, hair accessories, (purple eyes:1.2), light purple eyes, lavender eyes, bright eyes, sparkling eyes, lively eyes, phoenix eyes, almond eyes, upturned eyes, large eyes, long eyelashes, double eyelid, sparkly eyes, detailed eyes, beautiful eyes, fair skin, pale skin, light skin, white skin, smooth skin, flawless skin, glowing skin, soft skin, healthy skin, delicate features, pretty face, beautiful face, oval face, small nose, delicate nose, thin lips, small mouth, parted lips, light makeup, lip gloss, blush, young adult, teenage, youthful, young, slender, curvy, hourglass figure, perfect body, visible collarbones, slim, (huge breasts:1.3), gigantic breasts, massive breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, perky breasts, i-cup, narrow waist, slim waist, thin waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, long legs, beautiful legs, smooth legs, school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, plaid skirt, black skirt, neckerchief, ribbon tie, knee-high socks, white socks, school shoes, blazer, cardigan, casual clothes, young woman, teen, lively, cheerful, energetic, charming, attractive, cute, beautiful, pretty, east asian, asian
-FULL: masterpiece, best quality, ultra-detailed, highres, 8k uhd, absurdres, intricate details, light purple hair, lavender hair, pastel purple hair, lilac hair, long hair, very long hair, wavy hair, loose hair, flowing hair, silky hair, glossy hair, side-swept hair, golden hair ribbon, jade hairpin, hair ornament, hair accessories, (purple eyes:1.2), light purple eyes, lavender eyes, bright eyes, sparkling eyes, lively eyes, phoenix eyes, almond eyes, upturned eyes, large eyes, long eyelashes, double eyelid, sparkly eyes, detailed eyes, beautiful eyes, fair skin, pale skin, light skin, white skin, smooth skin, flawless skin, glowing skin, soft skin, healthy skin, delicate features, pretty face, beautiful face, oval face, small nose, delicate nose, thin lips, small mouth, parted lips, light makeup, lip gloss, blush, young adult, teenage, youthful, young, slender, curvy, hourglass figure, perfect body, visible collarbones, slim, (huge breasts:1.3), gigantic breasts, massive breasts, heavy breasts, large breasts, big breasts, very large breasts, voluptuous breasts, busty, round breasts, perky breasts, i-cup, narrow waist, slim waist, thin waist, wide hips, flared hips, curvy hips, thick thighs, plump thighs, long legs, beautiful legs, smooth legs, school uniform, japanese school uniform, sailor uniform, white shirt, pleated skirt, plaid skirt, black skirt, neckerchief, ribbon tie, knee-high socks, white socks, school shoes, blazer, cardigan, casual clothes, young woman, teen, lively, cheerful, energetic, charming, attractive, cute, beautiful, pretty, east asian, asian
+APPEARANCE: (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
 
 —— 现在轮到你 ——
+
 角色设定（中文）：
 
 ${c.rawContent}
 
-请按上面示例的格式和详细程度输出 APPEARANCE（≥120 tag）和 FULL 两段。
-
-**七大必填维度（缺一不可）**：
-1. 发型/发色 ≥15 tag（颜色精确+长度+质感+造型+装饰）
-2. 眼睛 ≥8 tag（颜色+形状+修饰）
-3. 肤色 ≥6 tag（主色+强化词）
-4. 身材/胸/腰/臀/腿 ≥25 tag（重点：腿型 long legs/beautiful legs/smooth legs；大腿 thick/thigh gap；胸型加权 1.3；腰臀比）
-5. 脸型/五官 ≥10 tag（脸型+颧骨+下巴+鼻+唇+妆）
-6. 服装 ≥12 tag（根据世界观/身份/场景；款式+颜色+材质+花纹+配饰齐全）
-7. 气质/年龄/种族 ≥6 tag
-
-**关键加权**：发色、眼睛、胸围、关键服饰用 (tag:1.3) 加权，每段限 2-3 个。
-
-**绝不留空**：原文没说的维度按世界观和气质推断填充（不知道发色就按种族世界观选；不知道服装就按身份场景选）。`,
+按示例风格输出 APPEARANCE 和 FULL 两段：
+- 总数 **55-75 个 tag**（数过，不能超 75）
+- 每个特征 **1-2 个 tag**，**禁止**近义词链
+- 加权 (tag:1.3) **最多 4 个**，建议加在：发色、眼睛颜色、胸、长腿
+- 七维度都要覆盖（发型/眼睛/肤色/身材-腿/脸/服装/气质），但每维严格按上面的 tag 数表
+- 原文没说的按世界观推断 1 个最准的，**不要 N 选 1**
+- 体型词不冲突（不能同时 slender + curvy + voluptuous，挑 1 个最准的）`,
                     },
                 ],
-                temperature: 1,
-                max_tokens: 4000,
+                temperature: 0.7,
+                max_tokens: 2000,
             }),
         });
 
