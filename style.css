@@ -497,6 +497,7 @@
     width: auto !important;
 }
 .phone-link-btn:hover { color: #1e40af !important; }
+.phone-wc-active { background: #dcfce7 !important; color: #16a34a !important; border-color: #86efac !important; }
 .phone-settings-section h4 { font-size: 12px; margin: 12px 0 6px; color: #475569; }
 .phone-settings-hint { font-size: 11px; color: #64748b; margin: 4px 0 8px; line-height: 1.5; }
 .phone-settings-row { display: flex; flex-direction: column; gap: 4px; font-size: 12px; margin-top: 8px; color: #475569; }

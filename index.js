@@ -378,6 +378,7 @@ async function rerender() {
             onModelChange: handleModelChange,
             onComfyuiUrlChange: handleComfyuiUrlChange,
             onToggleLore: handleToggleLore,
+            onToggleWorldContext: handleToggleWorldContext,
             onRefresh: () => { toastr.info('刷新中…'); rerender(); },
             onApiSave: handleApiSave,
             onApiTest: handleApiTest,
@@ -543,7 +544,11 @@ async function handleXhsRefresh() {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     toastr.info('生成新帖子…');
-    const posts = await generateFreshFeed(chatId, ctx);
+    const worldCtxEntries = State.getWorldContext();
+    const worldContextText = worldCtxEntries.length
+        ? await WB.fetchWorldContextText(worldCtxEntries)
+        : '';
+    const posts = await generateFreshFeed(chatId, ctx, worldContextText);
     if (posts.length) {
         toastr.success(`新增 ${posts.length} 条帖子`);
         rerender();
@@ -748,6 +753,11 @@ function handleComfyuiUrlChange(url, isMobile = false) {
 function getActiveComfyuiUrl() {
     const s = State.load();
     return (IS_TOUCH_DEVICE && s.imageGen.comfyuiUrlMobile) || s.imageGen.comfyuiUrl;
+}
+
+function handleToggleWorldContext({ uid, bookName, name }) {
+    State.toggleWorldContext({ uid, bookName, name });
+    rerender();
 }
 
 async function handleToggleLore(uid, bookName) {
