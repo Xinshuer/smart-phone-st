@@ -28,6 +28,8 @@ import { escapeHtml } from './lib/util.js';
 
 const EXT = 'smart-phone';
 
+const IS_TOUCH_DEVICE = ('ontouchstart' in window) || /Android|iPhone|iPod/i.test(navigator.userAgent);
+
 let phoneRoot = null;
 let currentApp = 'messages';
 let currentThread = null;
@@ -48,6 +50,9 @@ $(async function () {
     injectMenuButton();
     injectPhoneShell();
     bindEvents();
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', fixMobileShellPos);
+    }
     console.log(`[${EXT}] loaded`);
 });
 
@@ -202,30 +207,74 @@ function updateStatusBar() {
     $('.smart-phone-time').text(`${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`);
 }
 
+// Fix: ST's <html> transform collapses the containing block height to 0.
+// position:fixed shell with bottom:Xpx becomes zero-height on mobile.
+// Override via JS using window.visualViewport for correct dimensions.
+function fixMobileShellPos() {
+    if (!IS_TOUCH_DEVICE || !phoneRoot || phoneRoot.classList.contains('smart-phone-hidden')) return;
+    const m = 8;
+    const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    phoneRoot.style.setProperty('position', 'fixed',             'important');
+    phoneRoot.style.setProperty('top',      m + 'px',            'important');
+    phoneRoot.style.setProperty('left',     m + 'px',            'important');
+    phoneRoot.style.setProperty('right',    'auto',              'important');
+    phoneRoot.style.setProperty('bottom',   'auto',              'important');
+    phoneRoot.style.setProperty('width',    (vw - m * 2) + 'px', 'important');
+    phoneRoot.style.setProperty('height',   (vh - m * 2) + 'px', 'important');
+}
+
 function togglePhone() {
     if (!phoneRoot) return;
     phoneRoot.classList.toggle('smart-phone-hidden');
+    if (!phoneRoot.classList.contains('smart-phone-hidden')) {
+        fixMobileShellPos();
+        setTimeout(fixMobileShellPos, 200);
+    }
 }
 
 function makeFrameDraggable(handle, target) {
     let dragging = false, offX = 0, offY = 0;
-    handle.addEventListener('mousedown', (e) => {
-        const tag = e.target.tagName;
-        if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
-        // also skip if inside the screen content
-        if (e.target.closest('#smart-phone-screen')) return;
+
+    function isInteractive(el) {
+        return ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)
+            || !!el.closest('#smart-phone-screen');
+    }
+    function startDrag(clientX, clientY, el) {
+        if (isInteractive(el)) return false;
         dragging = true;
         const r = target.getBoundingClientRect();
-        offX = e.clientX - r.left; offY = e.clientY - r.top;
+        offX = clientX - r.left; offY = clientY - r.top;
+        return true;
+    }
+    function moveDrag(clientX, clientY) {
+        if (!dragging) return;
+        const nL = Math.max(0, Math.min(window.innerWidth  - target.offsetWidth,  clientX - offX));
+        const nT = Math.max(0, Math.min(window.innerHeight - target.offsetHeight, clientY - offY));
+        target.style.left = nL + 'px'; target.style.top = nT + 'px';
+        target.style.right = 'auto';   target.style.bottom = 'auto';
+    }
+
+    // Mouse
+    handle.addEventListener('mousedown', (e) => {
+        if (!startDrag(e.clientX, e.clientY, e.target)) return;
         e.preventDefault();
     });
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+    document.addEventListener('mouseup',   () => { dragging = false; });
+
+    // Touch — only on non-fullscreen (tablet/landscape); fullscreen shell is JS-sized anyway
+    handle.addEventListener('touchstart', (e) => {
+        const t = e.touches[0];
+        if (!startDrag(t.clientX, t.clientY, e.target)) return;
+    }, { passive: true });
+    handle.addEventListener('touchmove', (e) => {
         if (!dragging) return;
-        target.style.left = (e.clientX - offX) + 'px';
-        target.style.top = (e.clientY - offY) + 'px';
-        target.style.right = 'auto'; target.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', () => { dragging = false; });
+        e.preventDefault();
+        const t = e.touches[0];
+        moveDrag(t.clientX, t.clientY);
+    }, { passive: false });
+    handle.addEventListener('touchend', () => { dragging = false; });
 }
 
 // ─────────────────────────────────────────────────────────────────────────

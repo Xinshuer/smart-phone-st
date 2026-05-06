@@ -661,6 +661,35 @@
 
     /* Compose textarea: bigger */
     .xhs-compose textarea { font-size: 16px; min-height: 100px; padding: 12px; }
+
+    /* Chat input: prevent iOS auto-zoom (font-size must be ≥16px) */
+    #phone-input { font-size: 16px; padding: 10px 14px; }
+
+    /* Back button: 44px tap target */
+    .phone-back {
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        font-size: 28px;
+        padding: 0 14px;
+    }
+
+    /* Send button: 44px tap target */
+    #phone-send-btn { width: 44px; height: 44px; font-size: 18px; }
+
+    /* Thread input area: more breathing room */
+    .phone-thread-input { padding: 10px 12px; gap: 8px; }
+
+    /* Thread body: expand fill when shell is JS-sized */
+    .phone-thread-body { height: calc(100% - 140px); }
+
+    /* Bubble text: comfortable reading size */
+    .phone-bubble { font-size: 15px; padding: 10px 14px; }
+
+    /* Forum posts: bigger text */
+    .phone-forum-content { font-size: 14px; }
+    .phone-forum-title { font-size: 15px; }
 }
 
 /* Reference image used as avatar in messages list / thread header */
