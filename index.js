@@ -425,6 +425,8 @@ async function rerender() {
             // Auto-scroll thread to bottom
             const body = screen.querySelector('#phone-thread-body');
             if (body) body.scrollTop = body.scrollHeight;
+            // Wire bubble edit (single-tap reveals pencil; pencil swaps content for textarea)
+            wireBubbleEditing(screen);
         }
     }
     if (currentApp === 'xhs') {
@@ -635,6 +637,86 @@ async function onMessageReceived() {
 // ─────────────────────────────────────────────────────────────────────────
 // SMS send: user → main chat textarea (mochi style)
 // ─────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bubble inline edit (#1) — tap empty bubble → reveal pencil → tap pencil → edit
+// ─────────────────────────────────────────────────────────────────────────
+function wireBubbleEditing(screen) {
+    // Click on bubble (without pic) toggles .bubble-active to reveal pencil.
+    // Click on pencil enters edit mode. Click outside any bubble closes the active state.
+    screen.querySelectorAll('.phone-bubble:not(.has-pic)').forEach((bubble) => {
+        bubble.addEventListener('click', (e) => {
+            // Ignore clicks on the pencil itself (pencil has its own handler below)
+            if (e.target.closest('.bubble-edit-pencil')) return;
+            if (e.target.closest('.bubble-edit-textarea, .bubble-edit-cancel, .bubble-edit-save')) return;
+            // Already editing → ignore tap (use save/cancel buttons)
+            if (bubble.classList.contains('bubble-editing')) return;
+            // Toggle active state on this bubble; clear others
+            const wasActive = bubble.classList.contains('bubble-active');
+            screen.querySelectorAll('.phone-bubble.bubble-active').forEach((b) => b.classList.remove('bubble-active'));
+            if (!wasActive) bubble.classList.add('bubble-active');
+            e.stopPropagation();
+        });
+    });
+    // Pencil click → enter edit mode
+    screen.querySelectorAll('.bubble-edit-pencil').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const bubble = btn.closest('.phone-bubble');
+            if (!bubble) return;
+            enterBubbleEditMode(bubble);
+        });
+    });
+    // Click outside any bubble closes the active state (one-time listener)
+    if (screen._bubbleClickOutsideHooked) return;
+    screen._bubbleClickOutsideHooked = true;
+    screen.addEventListener('click', (e) => {
+        if (!e.target.closest('.phone-bubble')) {
+            screen.querySelectorAll('.phone-bubble.bubble-active').forEach((b) => b.classList.remove('bubble-active'));
+        }
+    });
+}
+
+function enterBubbleEditMode(bubble) {
+    if (!bubble || bubble.classList.contains('bubble-editing')) return;
+    const idxStr = bubble.dataset.msgIdx;
+    const idx = parseInt(idxStr, 10);
+    if (!Number.isInteger(idx)) return;
+    if (!currentThread) return;
+
+    const ctx = getContext();
+    const cs = State.getChatState(ctx.chatId || 'default');
+    const msg = cs.threads?.[currentThread]?.[idx];
+    if (!msg) return;
+
+    bubble.classList.add('bubble-editing');
+    bubble.classList.remove('bubble-active');
+    const original = msg.content || '';
+    bubble.innerHTML = `
+        <textarea class="bubble-edit-textarea" rows="3">${escapeHtml(original)}</textarea>
+        <div class="bubble-edit-actions">
+            <button class="bubble-edit-cancel">取消</button>
+            <button class="bubble-edit-save">保存</button>
+        </div>
+    `;
+    const ta = bubble.querySelector('.bubble-edit-textarea');
+    ta?.focus();
+    if (ta) ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    bubble.querySelector('.bubble-edit-cancel')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        rerender(); // discard, restore from state
+    });
+    bubble.querySelector('.bubble-edit-save')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newContent = ta?.value?.trim() || '';
+        if (newContent && newContent !== original) {
+            msg.content = newContent;
+            State.save();
+        }
+        rerender();
+    });
+}
 
 async function handleSendSMS(text) {
     if (!text || !currentThread) return;

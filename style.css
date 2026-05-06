@@ -329,6 +329,54 @@ img.wc-av { object-fit: cover; }
     margin-top: 4px;
     text-align: right;
 }
+/* Inline edit (Issue #1) — single tap reveals pencil; tap pencil → swap content for textarea */
+.bubble-edit-pencil {
+    position: absolute;
+    bottom: 4px;
+    right: 6px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    display: none;             /* hidden until .bubble-active */
+    align-items: center;
+    justify-content: center;
+}
+.phone-bubble.bubble-active .bubble-edit-pencil { display: flex; }
+.bubble-edit-pencil:hover { background: rgba(0, 0, 0, 0.75); }
+
+/* Edit-mode bubble: textarea + 取消 / 保存 */
+.phone-bubble.bubble-editing { padding: 8px; }
+.phone-bubble.bubble-editing::before { display: none; }  /* hide tail during edit */
+.bubble-edit-textarea {
+    width: 100%; min-height: 60px;
+    padding: 6px 8px; border-radius: 4px;
+    border: 1px solid #c5e0c5;
+    background: rgba(255, 255, 255, 0.9);
+    font-size: 14px; font-family: inherit; resize: vertical;
+    outline: none; box-sizing: border-box;
+}
+.phone-bubble.me .bubble-edit-textarea { background: #fff; }
+.bubble-edit-actions {
+    display: flex; gap: 6px; justify-content: flex-end;
+    margin-top: 6px;
+}
+.bubble-edit-cancel, .bubble-edit-save {
+    padding: 4px 12px; font-size: 12px;
+    border-radius: 4px; border: 1px solid;
+    cursor: pointer;
+}
+.bubble-edit-cancel { background: #fff; border-color: #d1d5db; color: #374151; }
+.bubble-edit-save { background: #07c160; border-color: #07c160; color: #fff; }
+
+/* Visual hint that images are clickable to enlarge (Issue #2) */
+.phone-pic { cursor: zoom-in; }
 .wc-divider {
     text-align: center;
     font-size: 11px;
@@ -1059,6 +1107,11 @@ img.wc-av { object-fit: cover; }
     .pf-cmd-image-grid { padding: 6px; gap: 6px; }
     /* Forward modal images preview: same */
     .pf-img-remove { width: 24px; height: 24px; font-size: 12px; }
+
+    /* Bubble inline edit (Issue #1) — mobile tap targets */
+    .bubble-edit-pencil { width: 32px; height: 32px; font-size: 14px; bottom: 6px; right: 8px; }
+    .bubble-edit-textarea { font-size: 16px; min-height: 70px; padding: 10px 12px; }
+    .bubble-edit-cancel, .bubble-edit-save { padding: 8px 16px; font-size: 14px; min-height: 36px; }
 
     /* —— P0 缺漏补充（Android 适配）—— */
 
