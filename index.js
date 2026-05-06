@@ -738,7 +738,17 @@ function handleRemoveContact(name) {
 }
 
 function handleModelChange(model) { const s = State.load(); s.imageGen.currentModel = model; State.save(); toastr.success(`已切换到 ${model}`); }
-function handleComfyuiUrlChange(url) { const s = State.load(); s.imageGen.comfyuiUrl = url; State.save(); }
+function handleComfyuiUrlChange(url, isMobile = false) {
+    const s = State.load();
+    if (isMobile) s.imageGen.comfyuiUrlMobile = url;
+    else s.imageGen.comfyuiUrl = url;
+    State.save();
+}
+
+function getActiveComfyuiUrl() {
+    const s = State.load();
+    return (IS_TOUCH_DEVICE && s.imageGen.comfyuiUrlMobile) || s.imageGen.comfyuiUrl;
+}
 
 async function handleToggleLore(uid, bookName) {
     const s = State.load();
@@ -800,8 +810,7 @@ async function handleFetchModels() {
 }
 
 async function handleComfyuiTest() {
-    const s = State.load();
-    const url = s.imageGen?.comfyuiUrl;
+    const url = getActiveComfyuiUrl();
     if (!url) return toastr.warning('请先填写 ComfyUI 地址');
     toastr.info('测试 ComfyUI 连接…');
     try {
@@ -859,6 +868,6 @@ window.smartPhone = {
     getContacts: () => State.load().contacts,
     findContact: (name) => State.findContact(name),
     getCurrentModel: () => State.load().imageGen.currentModel,
-    getComfyuiUrl: () => State.load().imageGen.comfyuiUrl,
+    getComfyuiUrl: () => getActiveComfyuiUrl(),
     getWorkflowPath: (model) => State.load().imageGen.workflowPaths[model],
 };
