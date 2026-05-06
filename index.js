@@ -459,6 +459,20 @@ async function onMessageReceived() {
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
     if (!parsed) return;
 
+    // Rescue <pic> tags the AI placed in prose (outside PHONE block) — assign them to SMS
+    // messages that don't already have a pic, so images still appear in the phone UI.
+    if (parsed.sms?.length) {
+        const PIC_RE = /<pic\b[^>]*\sprompt="[^"]*"[^>]*\/?>/gi;
+        const proseSection = Protocol.stripPhoneBlock(msg.mes);
+        const prosePics = [...proseSection.matchAll(PIC_RE)].map((m) => m[0]);
+        if (prosePics.length) {
+            let pi = 0;
+            for (const sms of parsed.sms) {
+                if (!sms.pic && pi < prosePics.length) sms.pic = prosePics[pi++];
+            }
+        }
+    }
+
     const chatId = ctx.chatId || 'default';
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
     if (parsed.moments?.length) State.appendMoments(chatId, parsed.moments);
