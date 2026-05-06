@@ -57,13 +57,11 @@ function injectFloatingButton() {
     btn.id = 'smart-phone-float-btn';
     btn.title = 'Smart Phone (拖动可移动)';
     btn.textContent = '📱';
-    // Inline styles with !important — escape any container with `transform`
-    // that would otherwise turn position:fixed into position:absolute.
-    // Also helps when host site has aggressive z-index stacking.
     btn.setAttribute('style', [
         'position: fixed !important',
         'right: 16px !important',
-        'bottom: 180px !important',
+        'bottom: auto !important',
+        'top: 0px !important',
         'width: 56px !important',
         'height: 56px !important',
         'border-radius: 50% !important',
@@ -81,9 +79,23 @@ function injectFloatingButton() {
         'touch-action: none !important',
         'pointer-events: auto !important',
     ].join('; '));
-    // Append to documentElement (= <html>) instead of <body> so a transformed
-    // body wrapper doesn't capture our fixed positioning context
     (document.documentElement || document.body).appendChild(btn);
+
+    // ST's <html> has CSS transform, making it the containing block for
+    // position:fixed. This collapses the html height to 0, so bottom:Xpx
+    // places the button off-screen. Use top=window.innerHeight-offset instead.
+    function applyFabPos() {
+        const h = Math.max(btn.offsetHeight, 56);
+        btn.style.setProperty('top',        (window.innerHeight - 180 - h) + 'px', 'important');
+        btn.style.setProperty('bottom',     'auto',    'important');
+        btn.style.setProperty('right',      '16px',    'important');
+        btn.style.setProperty('left',       'auto',    'important');
+        btn.style.setProperty('display',    'flex',    'important');
+        btn.style.setProperty('visibility', 'visible', 'important');
+    }
+    applyFabPos();
+    setTimeout(applyFabPos, 200);
+    setTimeout(applyFabPos, 800);
 
     btn.addEventListener('click', () => {
         if (btn.dataset.dragged === '1') { btn.dataset.dragged = ''; return; }
