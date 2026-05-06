@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Xinshuer",
-    "version": "0.10.4",
+    "version": "0.10.5",
     "homePage": "https://github.com/Xinshuer/smart-phone-st",
     "auto_update": true
 }
