@@ -417,81 +417,69 @@
 #phone-send-btn:hover { transform: scale(1.05); }
 
 /* ─── XHS ─── */
-.xhs-toolbar {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
-    position: sticky;
-    top: 0;
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(6px);
-    padding: 6px 0;
-    z-index: 1;
-}
-.xhs-toolbar .phone-btn { flex: 1; }
-.xhs-cta { background: linear-gradient(135deg, #ff6b88, #ff2442); color: white; }
-.xhs-feed {
-    column-count: 2;
-    column-gap: 6px;
-}
-.xhs-card {
-    break-inside: avoid;
-    margin-bottom: 6px;
-    background: white;
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-    cursor: pointer;
-    transition: transform 0.15s;
-}
-.xhs-card:hover { transform: translateY(-2px); }
-.xhs-card-pic { padding: 30px 8px; text-align: center; }
-.xhs-card-body { padding: 8px 10px; }
-.xhs-card-title { font-size: 12px; font-weight: 600; line-height: 1.4; }
-.xhs-card-meta { font-size: 10px; color: #94a3b8; display: flex; gap: 6px; margin-top: 4px; }
-.xhs-card-author { font-size: 10px; color: #ff6b88; margin-top: 4px; }
-.xhs-tag { color: #ff2442; }
-.xhs-mine { background: #ff2442; color: white; padding: 1px 5px; border-radius: 4px; font-size: 9px; margin-left: 4px; }
+.xhs-wrap { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
+/* 顶部导航 */
+.xhs-nav { display: flex; align-items: center; padding: 8px 10px; background: #fff; border-bottom: 1px solid #f0f0f0; gap: 6px; flex-shrink: 0; }
+.xhs-nav-logo { flex: 1; font-size: 16px; font-weight: 700; color: #ff2442; letter-spacing: 0.5px; }
+.xhs-nav-icon { background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 6px; color: #333; }
+.xhs-nav-compose { background: #ff2442; color: #fff; border: none; border-radius: 20px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-weight: 500; }
+.xhs-nav-compose:hover { background: #e8001f; }
+
+/* 瀑布流 */
+.xhs-feed { columns: 2; gap: 6px; padding: 6px; overflow-y: auto; flex: 1; }
+
+/* 卡片 */
+.xhs-card { break-inside: avoid; margin-bottom: 6px; border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.06); cursor: pointer; transition: transform 0.15s; }
+.xhs-card:hover { transform: translateY(-2px); }
+
+/* 图片区 — 3:4 比例 */
+.xhs-card-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; position: relative; padding: 0; text-align: left; }
+.xhs-card-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
+.xhs-card-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+@keyframes xhs-shimmer { 0% { background-position: 200% } 100% { background-position: -200% } }
+
+/* 卡片底部 */
+.xhs-card-footer { padding: 6px 8px 8px; }
+.xhs-card-title { font-size: 12px; font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #1a1a1a; }
+.xhs-card-meta { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
+.xhs-card-avatar { width: 16px; height: 16px; border-radius: 50%; background: #ff2442; color: #fff; font-size: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.xhs-card-user { font-size: 10px; color: #555; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xhs-card-likes { font-size: 10px; color: #999; }
+.xhs-mine-badge { background: #ff2442; color: #fff; font-size: 9px; padding: 1px 4px; border-radius: 4px; margin-left: 3px; vertical-align: middle; }
+
+/* Compose */
 .xhs-compose { padding: 4px 0; }
 .xhs-compose .phone-input { margin-bottom: 8px; }
 .xhs-compose textarea { font-family: inherit; }
 .xhs-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
-.xhs-tag-btn {
-    background: rgba(255, 36, 66, 0.08);
-    color: #ff2442;
-    border: 1px solid transparent;
-    border-radius: 12px;
-    padding: 4px 10px;
-    font-size: 11px;
-    cursor: pointer;
-}
-.xhs-tag-btn.selected {
-    background: #ff2442;
-    color: white;
-}
-.xhs-cta-primary {
-    background: linear-gradient(135deg, #ff6b88, #ff2442);
-    color: white;
-    width: 100%;
-    padding: 10px;
-    font-size: 13px;
-}
+.xhs-tag-btn { background: rgba(255,36,66,.08); color: #ff2442; border: 1px solid rgba(255,36,66,.2); border-radius: 20px; padding: 4px 10px; font-size: 11px; cursor: pointer; }
+.xhs-tag-btn.selected { background: #ff2442; color: #fff; border-color: #ff2442; }
+.xhs-cta-primary { background: linear-gradient(135deg, #ff6b88, #ff2442); color: #fff; border: none; border-radius: 24px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
 
-.xhs-detail-title { font-size: 16px; font-weight: 600; margin: 8px 0; }
-.xhs-detail-author { font-size: 11px; color: #94a3b8; margin-bottom: 8px; }
-.xhs-detail-body { font-size: 13px; line-height: 1.6; color: #1e293b; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
-.xhs-detail-meta { font-size: 11px; color: #64748b; padding: 8px 0; }
-.xhs-comments { margin-top: 8px; }
-.xhs-comments-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #475569; }
-.xhs-comment {
-    padding: 6px 0;
-    font-size: 12px;
-    border-bottom: 1px solid #f8fafc;
-}
-.xhs-comment-user { font-weight: 600; color: #ff2442; margin-right: 6px; }
-.xhs-comment-text { color: #1e293b; }
-.xhs-comment-time { font-size: 10px; color: #94a3b8; margin-left: 6px; }
+/* Detail */
+.xhs-detail { display: flex; flex-direction: column; height: 100%; overflow-y: auto; background: #fafafa; }
+.xhs-detail-topbar { display: flex; align-items: center; padding: 8px 10px; gap: 8px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; background: #fff; position: sticky; top: 0; z-index: 1; }
+.xhs-detail-topbar .phone-back { font-size: 24px; background: none; border: none; cursor: pointer; padding: 0 6px 0 0; color: #333; line-height: 1; }
+.xhs-detail-author-bar { display: flex; align-items: center; gap: 6px; flex: 1; }
+.xhs-author-av { width: 28px; height: 28px; border-radius: 50%; background: #ff2442; color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.xhs-author-name { font-size: 13px; font-weight: 500; color: #1a1a1a; }
+.xhs-follow { background: #ff2442; color: #fff; border: none; border-radius: 20px; padding: 4px 14px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
+.xhs-detail-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; flex-shrink: 0; padding: 0; }
+.xhs-detail-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
+.xhs-detail-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+.xhs-detail-content { padding: 14px 12px 8px; background: #fff; }
+.xhs-detail-title { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 6px; color: #1a1a1a; }
+.xhs-tag-pill { display: inline-block; color: #ff2442; font-size: 12px; margin-bottom: 10px; }
+.xhs-detail-body { font-size: 13px; line-height: 1.8; color: #333; white-space: pre-line; }
+.xhs-detail-time { font-size: 11px; color: #aaa; margin-top: 10px; }
+.xhs-detail-actions { display: flex; gap: 20px; padding: 10px 12px; background: #fff; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #666; }
+.xhs-comments { padding: 10px 12px 20px; background: #fff; margin-top: 8px; }
+.xhs-comments-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #1a1a1a; }
+.xhs-comment { display: flex; flex-direction: column; padding: 8px 0; border-bottom: 1px solid #f5f5f5; font-size: 12px; }
+.xhs-comment-user { font-weight: 600; color: #ff2442; }
+.xhs-comment-text { color: #333; margin-top: 3px; line-height: 1.5; }
+.xhs-comment-time { font-size: 10px; color: #aaa; margin-top: 3px; }
 
 .phone-api-presets { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 8px; }
 .phone-api-preset { font-size: 11px; padding: 4px 8px; }
@@ -652,12 +640,13 @@
 
     /* XHS (小红书) */
     .xhs-card-title { font-size: 13px; }
-    .xhs-card-meta, .xhs-card-author { font-size: 11px; }
+    .xhs-card-user, .xhs-card-likes { font-size: 11px; }
     .xhs-tag-btn { font-size: 13px; padding: 8px 12px; }
     .xhs-cta-primary { padding: 14px; font-size: 15px; min-height: 48px; }
     .xhs-detail-title { font-size: 17px; }
     .xhs-detail-body { font-size: 14px; }
     .xhs-comment { padding: 10px 0; font-size: 13px; }
+    .xhs-nav-compose { padding: 7px 14px; font-size: 13px; }
 
     /* Compose textarea: bigger */
     .xhs-compose textarea { font-size: 16px; min-height: 100px; padding: 12px; }
