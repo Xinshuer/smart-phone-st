@@ -557,6 +557,112 @@
 .phone-gen-appearance { flex-shrink: 0; padding: 4px 6px; font-size: 11px; }
 .phone-btn[disabled] { opacity: 0.55; cursor: wait; }
 
+/* ─────────────────────────────────────────────────────────────────────
+   MOBILE ADAPTATION — finger-sized tap targets, no iOS zoom on inputs
+   ───────────────────────────────────────────────────────────────────── */
+@media (max-width: 768px), (pointer: coarse) {
+    /* All interactive controls: bigger tap targets (Apple HIG 44px / Material 48px) */
+    .phone-btn {
+        font-size: 14px;
+        padding: 10px 16px;
+        min-height: 40px;
+        border-radius: 10px;
+    }
+    /* iOS auto-zooms inputs with font-size <16px; force 16px to disable */
+    .phone-input, .phone-select,
+    .phone-contact-anchor-edit {
+        font-size: 16px;
+        padding: 10px 12px;
+        min-height: 42px;
+    }
+    .phone-link-btn { font-size: 13px !important; padding: 6px 0 !important; }
+
+    /* Tab bar: thumb-friendly */
+    .smart-phone-tab {
+        padding: 10px 0 16px;
+        font-size: 22px;
+        min-height: 56px;
+    }
+    .smart-phone-tab small { font-size: 11px; }
+
+    /* Sub-tabs */
+    .phone-msg-subtab {
+        padding: 10px 0;
+        font-size: 14px;
+        min-height: 40px;
+    }
+
+    /* Close button */
+    .smart-phone-close {
+        width: 36px;
+        height: 36px;
+        font-size: 22px;
+        top: 8px;
+        right: 12px;
+    }
+
+    /* Screen content: larger base font */
+    .smart-phone-screen { font-size: 15px; padding: 14px; }
+
+    /* List items: bigger tap area */
+    .phone-list-item { padding: 14px 10px; gap: 12px; }
+    .phone-list-title { font-size: 15px; }
+    .phone-list-preview { font-size: 13px; }
+    .phone-list-time { font-size: 12px; }
+    .phone-avatar { width: 48px; height: 48px; font-size: 18px; }
+    .phone-avatar.small, .phone-avatar-ref.small { width: 40px; height: 40px; font-size: 14px; }
+
+    /* Settings rows */
+    .phone-settings-row { font-size: 14px; }
+    .phone-settings-hint { font-size: 13px; }
+    .phone-settings-section h3 { font-size: 16px; }
+    .phone-settings-section h4 { font-size: 14px; }
+    .phone-settings-actions { gap: 10px; }
+    .phone-settings-actions .phone-btn { padding: 12px 8px; }
+
+    /* Contact rows: stacked vertical layout — actions go below info on narrow screens */
+    .phone-contact-row {
+        flex-wrap: wrap;
+        padding: 12px;
+        font-size: 14px;
+    }
+    .phone-contact-ref { width: 64px; height: 64px; }
+    .phone-contact-actions {
+        flex-direction: row;
+        flex-wrap: wrap;
+        width: 100%;
+        margin-top: 8px;
+    }
+    .phone-contact-actions .phone-btn { font-size: 12px; padding: 8px 10px; flex: 1; min-width: 70px; }
+    .phone-contact-anchor-edit { font-size: 16px; padding: 10px; }
+    .phone-anchor-row { flex-wrap: wrap; }
+    .phone-gen-appearance { padding: 10px 14px; font-size: 13px; }
+    .phone-contact-prompt-label { font-size: 12px; }
+    .phone-contact-name { font-size: 15px; }
+
+    /* Worldbook entries */
+    .phone-wb-row {
+        flex-wrap: wrap;
+        padding: 12px;
+        font-size: 14px;
+    }
+    .phone-wb-comment { font-size: 14px; }
+    .phone-wb-preview { font-size: 12px; white-space: normal; }
+    .phone-wb-row .phone-btn { width: 100%; margin-top: 6px; }
+
+    /* XHS (小红书) */
+    .xhs-card-title { font-size: 13px; }
+    .xhs-card-meta, .xhs-card-author { font-size: 11px; }
+    .xhs-tag-btn { font-size: 13px; padding: 8px 12px; }
+    .xhs-cta-primary { padding: 14px; font-size: 15px; min-height: 48px; }
+    .xhs-detail-title { font-size: 17px; }
+    .xhs-detail-body { font-size: 14px; }
+    .xhs-comment { padding: 10px 0; font-size: 13px; }
+
+    /* Compose textarea: bigger */
+    .xhs-compose textarea { font-size: 16px; min-height: 100px; padding: 12px; }
+}
+
 /* Reference image used as avatar in messages list / thread header */
 .phone-avatar-ref {
     object-fit: cover;

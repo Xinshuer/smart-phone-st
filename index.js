@@ -52,14 +52,45 @@ $(async function () {
 });
 
 function injectFloatingButton() {
-    if ($('#smart-phone-float-btn').length) return;
-    $('body').append(`<div id="smart-phone-float-btn" title="Smart Phone (拖动可移动)">📱</div>`);
-    const btn = document.getElementById('smart-phone-float-btn');
+    if (document.getElementById('smart-phone-float-btn')) return;
+    const btn = document.createElement('div');
+    btn.id = 'smart-phone-float-btn';
+    btn.title = 'Smart Phone (拖动可移动)';
+    btn.textContent = '📱';
+    // Inline styles with !important — escape any container with `transform`
+    // that would otherwise turn position:fixed into position:absolute.
+    // Also helps when host site has aggressive z-index stacking.
+    btn.setAttribute('style', [
+        'position: fixed !important',
+        'right: 16px !important',
+        'bottom: 180px !important',
+        'width: 56px !important',
+        'height: 56px !important',
+        'border-radius: 50% !important',
+        'background: linear-gradient(135deg, #93c5fd, #60a5fa) !important',
+        'color: white !important',
+        'display: flex !important',
+        'align-items: center !important',
+        'justify-content: center !important',
+        'font-size: 28px !important',
+        'cursor: pointer !important',
+        'z-index: 2147483646 !important',
+        'box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important',
+        'user-select: none !important',
+        '-webkit-tap-highlight-color: transparent !important',
+        'touch-action: none !important',
+        'pointer-events: auto !important',
+    ].join('; '));
+    // Append to documentElement (= <html>) instead of <body> so a transformed
+    // body wrapper doesn't capture our fixed positioning context
+    (document.documentElement || document.body).appendChild(btn);
+
     btn.addEventListener('click', () => {
         if (btn.dataset.dragged === '1') { btn.dataset.dragged = ''; return; }
         togglePhone();
     });
     makeButtonDraggable(btn);
+    console.log(`[${EXT}] floating button injected → ${btn.parentNode?.tagName}`);
 }
 
 function makeButtonDraggable(btn) {
@@ -73,10 +104,12 @@ function makeButtonDraggable(btn) {
     const move = (clientX, clientY) => {
         if (!dragging) return;
         moved = true;
-        btn.style.left = (clientX - offX) + 'px';
-        btn.style.top = (clientY - offY) + 'px';
-        btn.style.right = 'auto';
-        btn.style.bottom = 'auto';
+        // setProperty with 'important' so we override the inline !important
+        // baseline styles set in injectFloatingButton
+        btn.style.setProperty('left', (clientX - offX) + 'px', 'important');
+        btn.style.setProperty('top', (clientY - offY) + 'px', 'important');
+        btn.style.setProperty('right', 'auto', 'important');
+        btn.style.setProperty('bottom', 'auto', 'important');
     };
     const end = () => {
         if (dragging && moved) btn.dataset.dragged = '1';
