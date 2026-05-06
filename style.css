@@ -366,6 +366,9 @@
 .phone-settings-section h3 { font-size: 14px; margin: 0 0 8px; color: #1e293b; }
 .phone-settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .phone-settings-header h3 { margin: 0; }
+.phone-section-toggle { background: none; border: none; cursor: pointer; font-size: 12px; color: #94a3b8; padding: 2px 6px; line-height: 1; flex-shrink: 0; }
+.phone-section-toggle:hover { color: #475569; }
+.phone-section-body.phone-collapsed { display: none; }
 .phone-wb-meta { font-size: 10px; color: #64748b; margin: 2px 0; }
 .phone-list-preview.empty { color: #cbd5e1; font-style: italic; }
 
@@ -606,6 +609,7 @@
     .phone-settings-hint { font-size: 13px; }
     .phone-settings-section h3 { font-size: 16px; }
     .phone-settings-section h4 { font-size: 14px; }
+    .phone-section-toggle { font-size: 14px; padding: 4px 8px; min-width: 32px; min-height: 32px; }
     .phone-settings-actions { gap: 10px; }
     .phone-settings-actions .phone-btn { padding: 12px 8px; }
 
