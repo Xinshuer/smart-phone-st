@@ -23,6 +23,8 @@ import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
 import { renderMessageList, renderThread, renderMessagesSubTabs, renderContactsTab } from './lib/apps/messages.js';
 import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumDetailId } from './lib/apps/forum.js';
+import { renderMoments, bindMomentsHandlers, setMomentsView as momentsSetView } from './lib/apps/moments.js';
+import { generateContactMoments, generateMomentReplies } from './lib/moments-api.js';
 import { renderXHS, bindXHSHandlers, getActiveView as xhsView, setView as xhsSetView } from './lib/apps/xhs.js';
 import { renderSettings, bindSettingsHandlers, entryToContact } from './lib/apps/settings.js';
 import { escapeHtml } from './lib/util.js';
@@ -177,6 +179,7 @@ function injectPhoneShell() {
                 <div class="smart-phone-screen" id="smart-phone-screen"></div>
                 <div class="smart-phone-tabbar">
                     <button class="smart-phone-tab" data-app="messages">💬<small>消息</small></button>
+                    <button class="smart-phone-tab" data-app="moments">👥<small>朋友圈</small></button>
                     <button class="smart-phone-tab" data-app="forum">📋<small>论坛</small></button>
                     <button class="smart-phone-tab" data-app="xhs">📕<small>小红书</small></button>
                     <button class="smart-phone-tab" data-app="settings">⚙️<small>设置</small></button>
@@ -193,6 +196,7 @@ function injectPhoneShell() {
         currentMessagesSubTab = 'chats';
         xhsSetView('feed');
         forumSetView('feed');
+        momentsSetView('feed');
         rerender();
     });
     $('.smart-phone-close').on('click', () => phoneRoot.classList.add('smart-phone-hidden'));
@@ -305,6 +309,9 @@ async function rerender() {
                     : renderMessageList(chatId));
             }
             break;
+        case 'moments':
+            html = renderMoments(chatId, State.load().contacts, getContext()?.name1 || '我');
+            break;
         case 'forum':
             html = renderForum(chatId);
             break;
@@ -372,6 +379,16 @@ async function rerender() {
             onSubmit: handleXhsSubmit,
         });
     }
+    if (currentApp === 'moments') {
+        bindMomentsHandlers(screen, {
+            onRefresh: handleMomentsRefresh,
+            onCompose: () => { momentsSetView('compose'); rerender(); },
+            onBackToFeed: () => { momentsSetView('feed'); rerender(); },
+            onSubmit: handleMomentsSubmit,
+            onLike: handleMomentsLike,
+            onComment: handleMomentsComment,
+        });
+    }
     if (currentApp === 'forum') {
         bindForumHandlers(screen, {
             onRefresh: handleForumRefresh,
@@ -414,7 +431,7 @@ function bindEvents() {
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onPromptReady);
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.MESSAGE_UPDATED, onMessageReceived); // re-parse on edits
-    eventSource.on(event_types.CHAT_CHANGED, () => { currentThread = null; xhsSetView('feed'); rerender(); });
+    eventSource.on(event_types.CHAT_CHANGED, () => { currentThread = null; xhsSetView('feed'); forumSetView('feed'); momentsSetView('feed'); rerender(); });
 }
 
 function onPromptReady(eventData) {
@@ -534,6 +551,78 @@ async function handleReroll() {
     } catch (err) {
         console.error('[smart-phone] reroll failed:', err);
         toastr.error('重新生成失败');
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 朋友圈 (Moments)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleMomentsRefresh() {
+    const contacts = State.load().contacts;
+    if (!contacts.length) { toastr.warning('请先在设置中导入联系人'); return; }
+    toastr.info('生成朋友圈动态…');
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const worldCtxEntries = State.getWorldContext();
+    const worldContextText = worldCtxEntries.length ? await WB.fetchWorldContextText(worldCtxEntries) : '';
+    const posts = await generateContactMoments(chatId, contacts, ctx, worldContextText);
+    if (posts.length) { toastr.success(`新增 ${posts.length} 条动态`); rerender(); }
+    else toastr.warning('生成失败（检查手机 API 配置）');
+}
+
+async function handleMomentsSubmit({ content }) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const userName = ctx?.name1 || '我';
+    const now = new Date();
+    const post = {
+        id: `moment_user_${Date.now()}`,
+        from: 'user',
+        authorName: userName,
+        content,
+        pic: null,
+        location: null,
+        likes: 0,
+        likedByUser: false,
+        comments: [],
+        time: Protocol.nowHHMM(),
+        date: `${now.getMonth() + 1}-${now.getDate()}`,
+    };
+    State.appendMoments(chatId, [post]);
+    momentsSetView('feed');
+    rerender();
+    const contacts = State.load().contacts;
+    if (contacts.length) {
+        toastr.info('等待联系人评论…');
+        setTimeout(async () => {
+            const ok = await generateMomentReplies(chatId, post.id, post, contacts, ctx);
+            if (ok) { toastr.success('收到评论'); rerender(); }
+        }, 500);
+    }
+}
+
+function handleMomentsLike(postId) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    State.toggleMomentsLike(chatId, postId);
+    rerender();
+}
+
+async function handleMomentsComment(postId, text) {
+    if (!postId || !text) return;
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const userName = ctx?.name1 || '我';
+    State.appendMomentsComment(chatId, postId, [{ from: 'user', authorName: userName, content: text, time: Protocol.nowHHMM() }]);
+    rerender();
+    const contacts = State.load().contacts;
+    if (contacts.length) {
+        setTimeout(async () => {
+            const post = State.findMomentsPost(chatId, postId);
+            const ok = await generateMomentReplies(chatId, postId, post, contacts, ctx);
+            if (ok) rerender();
+        }, 500);
     }
 }
 
