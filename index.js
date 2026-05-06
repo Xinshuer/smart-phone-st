@@ -378,6 +378,7 @@ async function rerender() {
             onOpenPost: (id) => { xhsSetView('detail', id); rerender(); },
             onBackToFeed: () => { xhsSetView('feed'); rerender(); },
             onSubmit: handleXhsSubmit,
+            onRerollPic: rerollPicSlot,
         });
     }
     if (currentApp === 'moments') {
@@ -400,6 +401,7 @@ async function rerender() {
             onCompose: () => { forumSetView('compose'); rerender(); },
             onSubmit: handleForumSubmit,
             onReply: (text) => handleForumReply(getForumDetailId(), text),
+            onRerollPic: rerollPicSlot,
         });
     }
     if (currentApp === 'settings') {
@@ -1090,31 +1092,62 @@ function triggerPicSlots(screen) {
     slots.forEach(async (slot) => {
         slot.setAttribute('data-loaded', '1');
         const picTag = slot.dataset.pic;
+        // data-hint carries the post author name; falls back to currentThread for message view
+        const hintName = slot.dataset.hint;
+        const hint = hintName ? { from: hintName } : (currentThread ? { from: currentThread } : {});
 
-        // Serve cached URL immediately — no regeneration on tab switch or re-render
-        if (picUrlCache.has(picTag)) {
-            const url = picUrlCache.get(picTag);
-            slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
-            attachPicClick(slot, url);
+        const cached = picUrlCache.get(picTag);
+
+        // Already resolved — show immediately
+        if (typeof cached === 'string') {
+            slot.innerHTML = `<img src="${escapeHtml(cached)}" class="phone-pic">`;
+            attachPicClick(slot, cached);
             return;
         }
 
+        // In-flight Promise — await the same request instead of firing a duplicate
+        if (cached instanceof Promise) {
+            try {
+                const url = await cached;
+                if (url) { slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`; attachPicClick(slot, url); }
+                else slot.textContent = '📷 生成失败';
+            } catch (err) { slot.textContent = `📷 ${err.message || err}`; }
+            return;
+        }
+
+        // Not cached — start generation and store the Promise immediately to block duplicates
+        const promise = window.smartImageGen.generateFromPicTag(picTag, {
+            contacts: State.load().contacts,
+            hint,
+        }).then((url) => { picUrlCache.set(picTag, url); return url; })
+          .catch((err) => { picUrlCache.delete(picTag); throw err; });
+        picUrlCache.set(picTag, promise);
+
         try {
-            const url = await window.smartImageGen.generateFromPicTag(picTag, {
-                contacts: State.load().contacts,
-                // Pass current thread name so locked character seeds are applied
-                hint: currentThread ? { from: currentThread } : {},
-            });
+            const url = await promise;
             if (url) {
                 slot.innerHTML = `<img src="${escapeHtml(url)}" class="phone-pic">`;
                 attachPicClick(slot, url);
-                picUrlCache.set(picTag, url);
             } else slot.textContent = '📷 生成失败';
         } catch (err) {
             console.error(err);
             slot.textContent = `📷 ${err.message || err}`;
         }
     });
+}
+
+function rerollPicSlot(picTag) {
+    picUrlCache.delete(picTag);
+    const screen = phoneRoot?.querySelector('#smart-phone-screen');
+    if (!screen) return;
+    // Find the slot by its data-pic value and reset it so triggerPicSlots will re-process it
+    screen.querySelectorAll('.phone-image-slot[data-pic]').forEach((slot) => {
+        if (slot.dataset.pic === picTag) {
+            slot.removeAttribute('data-loaded');
+            slot.innerHTML = '📷 生成中…';
+        }
+    });
+    triggerPicSlots(screen);
 }
 
 // Public API for image-gen extension

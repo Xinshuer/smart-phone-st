@@ -425,6 +425,9 @@ img.wc-av { object-fit: cover; }
 .tb-floor-author { font-size: 13px; font-weight: 600; color: #0b72df; margin-bottom: 4px; }
 .tb-floor-content { font-size: 13px; color: #333; line-height: 1.6; word-break: break-word; }
 .tb-floor-meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 11px; color: #999; flex-wrap: wrap; }
+.forum-reroll-row { margin-top: 6px; }
+.forum-reroll-pic-btn { background: none; border: 1px solid #ddd; border-radius: 12px; padding: 3px 10px; font-size: 11px; color: #888; cursor: pointer; }
+.forum-reroll-pic-btn:hover { background: #f5f5f5; color: #333; }
 .tb-floor-time { color: #bbb; }
 .tb-replies { background: #f8f8f8; }
 
@@ -595,6 +598,9 @@ img.wc-av { object-fit: cover; }
 .xhs-detail-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; flex-shrink: 0; padding: 0; }
 .xhs-detail-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
 .xhs-detail-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+.xhs-detail-img-actions { display: flex; justify-content: flex-end; padding: 6px 10px; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
+.xhs-reroll-pic-btn { background: none; border: 1px solid #ddd; border-radius: 14px; padding: 4px 12px; font-size: 12px; color: #666; cursor: pointer; }
+.xhs-reroll-pic-btn:hover { background: #f5f5f5; color: #333; }
 .xhs-detail-content { padding: 14px 12px 8px; background: #fff; }
 .xhs-detail-title { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 6px; color: #1a1a1a; }
 .xhs-tag-pill { display: inline-block; color: #ff2442; font-size: 12px; margin-bottom: 10px; }

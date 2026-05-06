@@ -2,11 +2,11 @@
     "display_name": "Smart Phone",
     "loading_order": 5,
     "requires": [],
-    "optional": ["smart-image-gen-st"],
+    "optional": ["smart-image-gen"],
     "js": "index.js",
     "css": "style.css",
     "author": "Xinshuer",
-    "version": "0.4.0",
+    "version": "0.8.0",
     "homePage": "https://github.com/Xinshuer/smart-phone-st",
     "auto_update": true
 }
