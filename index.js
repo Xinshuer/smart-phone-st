@@ -291,10 +291,14 @@ async function rerender() {
         t.classList.toggle('active', t.dataset.app === currentApp);
     });
 
+    const NO_CHAT_HTML = '<div class="phone-empty" style="padding:48px 20px">请先在酒馆进入一个对话</div>';
+
     let html = '';
     switch (currentApp) {
         case 'messages':
-            if (currentThread) {
+            if (!ctx.chatId) {
+                html = NO_CHAT_HTML;
+            } else if (currentThread) {
                 html = renderThread(chatId, currentThread);
             } else {
                 const subTabHdr = renderMessagesSubTabs(currentMessagesSubTab);
@@ -304,7 +308,7 @@ async function rerender() {
             }
             break;
         case 'forum':
-            html = renderForum(chatId);
+            html = ctx.chatId ? renderForum(chatId) : NO_CHAT_HTML;
             break;
         case 'xhs':
             html = renderXHS(chatId);
