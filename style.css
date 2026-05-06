@@ -928,6 +928,21 @@ img.wc-av { object-fit: cover; }
     font-size: 12px;
 }
 .phone-wb-text { flex: 1; min-width: 0; }
+/* Two-button action column (v0.10.3 manual classification) */
+.phone-wb-actions {
+    display: flex; flex-direction: column; gap: 4px;
+    flex-shrink: 0; align-items: stretch;
+}
+.phone-wb-actions .phone-btn {
+    font-size: 11px; padding: 5px 8px;
+    white-space: nowrap;
+}
+.phone-wb-actions .phone-btn.phone-wb-active {
+    background: rgba(7, 193, 96, 0.15);
+    border-color: rgba(7, 193, 96, 0.4);
+    color: #06ad56;
+    font-weight: 600;
+}
 .phone-wb-comment { font-weight: 600; color: #1e293b; }
 .phone-wb-preview { font-size: 11px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -1053,7 +1068,15 @@ img.wc-av { object-fit: cover; }
     }
     .phone-wb-comment { font-size: 14px; }
     .phone-wb-preview { font-size: 12px; white-space: normal; }
-    .phone-wb-row .phone-btn { width: 100%; margin-top: 6px; }
+    /* Two-button actions: full row, side-by-side on mobile (better touch targets) */
+    .phone-wb-actions {
+        flex-direction: row; gap: 6px;
+        width: 100%; margin-top: 8px;
+    }
+    .phone-wb-actions .phone-btn {
+        flex: 1; min-height: 36px;
+        font-size: 13px; padding: 8px;
+    }
 
     /* XHS (小红书) */
     .xhs-card-title { font-size: 13px; }
