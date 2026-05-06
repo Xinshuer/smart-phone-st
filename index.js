@@ -348,6 +348,7 @@ async function rerender() {
             }
         } else {
             screen.querySelector('[data-back]')?.addEventListener('click', () => { currentThread = null; rerender(); });
+            screen.querySelector('#phone-reroll-btn')?.addEventListener('click', handleReroll);
             const input = screen.querySelector('#phone-input');
             const sendBtn = screen.querySelector('#phone-send-btn');
             const send = () => handleSendSMS(input?.value?.trim() || '');
@@ -498,6 +499,30 @@ async function handleSendSMS(text) {
     ta.value = wrapped;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     document.querySelector('#send_but')?.click();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reroll — remove last NPC message batch and trigger ST regenerate
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleReroll() {
+    if (!currentThread) return;
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const removed = State.popLastNpcBatch(chatId, currentThread);
+    if (!removed.length) { toastr.warning('没有可重新生成的消息'); return; }
+    for (const m of removed) {
+        if (m.pic) picUrlCache.delete(m.pic);
+    }
+    rerender();
+    try {
+        const { Generate, is_send_press } = await import('../../../../script.js');
+        if (is_send_press) { toastr.warning('正在生成中，请稍候'); return; }
+        Generate('regenerate');
+    } catch (err) {
+        console.error('[smart-phone] reroll failed:', err);
+        toastr.error('重新生成失败');
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

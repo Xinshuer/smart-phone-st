@@ -252,10 +252,11 @@
 .phone-thread-header {
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: space-between;
+    gap: 4px;
     padding: 8px 4px 12px;
     border-bottom: 1px solid rgba(143, 184, 237, 0.15);
-    margin-bottom: 12px;
+    margin-bottom: 0;
 }
 .phone-back {
     background: none;
@@ -264,30 +265,89 @@
     color: #2563eb;
     cursor: pointer;
     padding: 0 8px;
+    flex-shrink: 0;
 }
-.phone-thread-title { font-weight: 600; }
+.phone-thread-title { font-weight: 600; flex: 1; text-align: center; }
+
+/* ─── WeChat-style message rows ─── */
+.wc-row {
+    display: flex;
+    align-items: flex-end;
+    margin-bottom: 12px;
+    gap: 8px;
+}
+.wc-row.me { flex-direction: row-reverse; }
+.wc-av {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #5b8cee;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    object-fit: cover;
+}
+img.wc-av { object-fit: cover; }
 
 .phone-bubble {
-    max-width: 75%;
-    margin-bottom: 8px;
+    max-width: 72%;
     padding: 8px 12px;
-    border-radius: 16px 16px 16px 4px;
-    background: white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    border-radius: 4px 12px 12px 12px;
+    background: #fff;
+    position: relative;
     word-break: break-word;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.phone-bubble::before {
+    content: '';
+    position: absolute;
+    left: -7px;
+    top: 10px;
+    border: 6px solid transparent;
+    border-right: 7px solid #fff;
+    border-left: 0;
 }
 .phone-bubble.me {
-    margin-left: auto;
-    background: #93c5fd;
-    color: white;
-    border-radius: 16px 16px 4px 16px;
+    background: #95ec69;
+    color: #1a1a1a;
+    border-radius: 12px 4px 12px 12px;
+}
+.phone-bubble.me::before {
+    left: auto;
+    right: -7px;
+    border-right: 0;
+    border-left: 7px solid #95ec69;
 }
 .phone-bubble-time {
     font-size: 10px;
-    opacity: 0.6;
+    opacity: 0.55;
     margin-top: 4px;
     text-align: right;
 }
+.wc-divider {
+    text-align: center;
+    font-size: 11px;
+    color: #aaa;
+    margin: 8px 0;
+    user-select: none;
+}
+.phone-reroll-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    color: #64748b;
+    padding: 4px 8px;
+    border-radius: 6px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.phone-reroll-btn:hover { background: rgba(100, 116, 139, 0.12); }
 .phone-sticker, .phone-voice, .phone-hongbao {
     font-size: 13px;
     padding: 4px 0;
@@ -374,9 +434,10 @@
 
 /* ─── Thread input ─── */
 .phone-thread-body {
-    height: calc(100% - 130px);
+    height: calc(100% - 120px);
     overflow-y: auto;
-    padding-bottom: 8px;
+    padding: 12px 10px 8px;
+    background: #ededed;
 }
 .phone-thread-input {
     position: sticky;
@@ -678,8 +739,10 @@
     /* Thread body: expand fill when shell is JS-sized */
     .phone-thread-body { height: calc(100% - 140px); }
 
-    /* Bubble text: comfortable reading size */
+    /* WeChat row: bigger avatar + bubble text */
+    .wc-av { width: 40px; height: 40px; font-size: 17px; }
     .phone-bubble { font-size: 15px; padding: 10px 14px; }
+    .phone-reroll-btn { font-size: 20px; min-width: 44px; min-height: 44px; }
 
     /* Forum posts: bigger text */
     .phone-forum-content { font-size: 14px; }
