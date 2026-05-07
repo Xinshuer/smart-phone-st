@@ -1103,64 +1103,88 @@ async function handleGenerateAppearance(name, btn) {
                         role: 'system',
                         content: `你是 SDXL / Danbooru tag 专家。把中文人设转成精准、紧凑的英文 booru tag。
 
-**核心原则（违反 = 失败）**：
-1. **总量控制**：APPEARANCE 严格在 **55-75 个 tag** 之间。SDXL token 上限 75 一段，超过会被切段稀释，过量 tag 反而互相打架，画质崩坏。
-2. **不堆近义词**：每个特征**最多 2 个 tag**（1 主词 + 0-1 辅助）。要强调用加权 (tag:1.3)，**禁止**用 4-5 个近义词刷权重——模型会平均它们而不是叠加。
-3. **不冲突**：不能同时写 "slender, curvy, voluptuous, hourglass" 这种互相矛盾的体型词，挑 1-2 个最准的。
-4. **从原文出发**：原文没写就按世界观推断 1 个准确选项，**不要给 N 选 1 让模型猜**。
+**5 条铁律（违反任何一条 = 失败）**：
+
+1. **总量上限**：APPEARANCE **严格 50-65 个 tag**（数过再输出）。SDXL CLIP 75 token 一段，过量会切段且各 tag 互相打架。
+2. **每特征 1 个 tag**（最多 2 个）。禁止近义词链。要加重用 (tag:1.3) 加权，**不用**4-5 个同义词刷分。
+   反例（错的）：silver hair, silver-blue hair, blue-white hair, icy silver hair → 写成 \`(silver hair:1.3)\` 一个就够
+   反例（错的）：huge breasts, massive breasts, gigantic breasts, h-cup, i-cup, j-cup, k-cup, l-cup → 写成 \`(huge breasts:1.3), j-cup\` 两个
+3. **罩杯/年龄/体型只 1 个最准的**。不允许 loli + young adult 同时出现，不允许 h-cup 到 l-cup 全列出。从档案里选最贴切的那一个。
+4. **不从人物关系/性格/故事/世界观提取 tag**。booru tag 只描述**视觉**，不描述心理。
+   - ❌ 原文说"性格冷漠/孤傲/优雅" → **不**写 cold, aloof, elegant, regal, dignified（这是性格词不是视觉词）
+   - ❌ 原文说"她有反差萌（loli巨乳）" → **不**写 extreme contrast / contradicting clothing / clothing contrast（这是概念词不是 booru tag）
+   - ❌ 原文说"她是 user 的师姐/义女/敌人" → **不**写 sister, daughter, enemy（关系词不进 prompt）
+   - ✅ 视觉特征本身，写出来（loli 体型 + huge breasts 是视觉，照实写）
+5. **禁止中式比喻**。jade-like skin / phoenix eyes（OK，是 booru 标准）/ cold skin / cold eyes / phoenix crown / cold-colored hairpin 等都是中式描述，不是 booru tag。
+   - ✅ 标准 booru：fair skin, porcelain skin, blue eyes, almond eyes, hairpin, hair stick
+   - ❌ 中式：jade-like skin, cold skin, cold eyes, cold-colored hairpin, phoenix crown
 
 **严格输出格式**（只输出两行，无前后缀）：
-APPEARANCE: [55-75 个英文 booru tag，逗号分隔]
-FULL: [质量词前缀 + APPEARANCE 内容；禁场景/光照/构图/视角/画风词]
+APPEARANCE: [50-65 个英文 booru tag，逗号分隔]
+FULL: [质量词前缀 + APPEARANCE；禁场景/光照/构图/视角/画风词]
 
-**FULL 内容白名单**（只能这两段）：
-- 质量词前缀：masterpiece, best quality, highres, absurdres, intricate details
-- APPEARANCE 全部 tag
+**FULL 黑名单**（出现 = 不合格）：背景词、光照词、构图视角（1girl, solo, looking at viewer, full body, close-up 等）、画风词（photorealistic, anime style 等）。这些由帖子场景动态注入。
 
-**FULL 黑名单**（出现一个 = 不合格）：
-- 背景：simple background / white background / studio / outdoor / indoor / scenery
-- 光照：studio lighting / soft lighting / cinematic lighting / natural lighting
-- 构图：upper body portrait / full body / looking at viewer / from above / close-up / 1girl / solo
-- 画风：photorealistic / hyperrealistic / anime style / illustration / detailed skin / depth of field / sharp focus
-- 理由：这些由帖子场景动态注入；FULL 只描人物本身，不锁场景/画风。
+**优先级 + tag 配额表**（重点维度多写，次要少写或省略）：
 
-**七维度精简清单**（每维 N 个 tag，**严格遵守**）：
+【**🔴 重点维度（必须精准）**】
+
+| 维度 | tag 数 | 必含 |
+|------|--------|------|
+| 胸 | 2-3 | (cup-size:1.3) + 形状（如 round / heavy）+ 可选 cleavage 类形容 |
+| 躯干（腰/腹） | 2-3 | 1 腰型（narrow/slim/wasp waist）+ visible collarbones + 可选 hip bones / flat stomach |
+| 臀 | 2 | 1 臀型（wide hips / huge ass / plump ass / small ass）+ 1 形状或加权 |
+| 大腿 | 2 | thick thighs / thigh gap / slim thighs **只选 1 个** + 可选 (long legs:1.2) |
+| 面部 | 4-5 | 1 脸型（oval/round/heart-shaped/V-line）+ 1 五官（jawline/cheekbone/nose）+ 1 唇 + 1 妆 + 1 备选 |
+| 四肢 | 1-2 | (long legs:1.2) 或 long arms 或 slender limbs / petite limbs，按身材选 1-2 |
+| 年龄 | 1-2 | **只选 1 个最贴切**：loli / child / teen / young adult / adult / mature / elderly + 1 强化（如 youthful / aged） |
+
+【**🟡 次要维度（轻量描写）**】
 
 | 维度 | tag 数 | 写法 |
 |------|--------|------|
-| 1. 发型 | 5-8 | 1 颜色（加权 1.3）+ 1 长度 + 1 质感 + 1 造型 + 1-2 装饰 |
-| 2. 眼睛 | 4-6 | 1 颜色（加权 1.3）+ 1 形状 + 1-2 修饰（long eyelashes 等）|
-| 3. 肤色 | 2-3 | 1 主色（fair/pale/tan/dark skin）+ 1 强化（porcelain/smooth/healthy） |
-| 4. 身材 | 12-18 | 1 身高 + 1 体型 + 胸（加权 1.3，1-2 词）+ 1 腰 + 1 臀 + 2-3 腿（**重点**）+ 1-2 其它 |
-| 5. 脸型 | 4-6 | 1 脸型 + 1 颧骨/下巴 + 1 鼻 + 1 唇 + 1-2 妆 |
-| 6. 服装 | 5-8 | 1 大类（hanfu/school uniform/business suit）+ 2-3 款式细节 + 1 材质 + 1-2 配饰 |
-| 7. 气质/年龄 | 3-5 | 1 年龄 + 1 种族 + 1-2 气质 |
+| 头发颜色 | 1-2 | (颜色:1.3) + 可选第二颜色（如 gradient hair） |
+| 眼睛 | 3 | (颜色:1.3) + 形状（almond/phoenix/fox eyes 等）+ 可选 long eyelashes |
+| 肤色 | 1-2 | fair/pale/tan/dark skin + 可选 1 个强化（porcelain/healthy/sun-kissed/smooth）|
+| 发型 | 1-2 | 长度 + 造型（如 long hair, ponytail）。装饰省略或 1 个 hair ornament |
+| 衣服 | 1-2 | 1 大类（hanfu / school uniform / casual / dress / robe）。**只 1-2 tag**，款式细节交给场景注入 |
+| 鞋袜 | 0-1 | 默认省略；如对角色身份关键（如 thigh-high boots 是萝莉萌点）才写 1 个 |
+| 种族 | 1 | east asian / west asian / european，最多 1 个 |
+| 姿势 / 背景 | 0 | **完全不写**，由帖子场景动态注入 |
 
-**身材腿型重点（用户特别要求）**：长腿/美腿务必写到，但精简：
-- 长腿：long legs（可加权 1.2）
-- 大腿（按设定选）：thick thighs / thigh gap / slim thighs（**只选一个**）
-- 美感：beautiful legs（够了，不要再堆 smooth/shapely/model 等）
+**总配额**：重点 ~14-17 + 次要 ~9-13 + 缓冲 = **50-65 个 tag**
 
-**加权规则**：
-- 加权用 (tag:1.3)，**最多 4 个加权 tag**（建议：发色、眼睛、胸、长腿）
-- 加权值范围 1.1-1.4，超出会过度
-- **不**用近义词链刷权重（这是新手错误，效果反而差）
+**加权规则**：(tag:1.3)，**最多 4 个加权点**，建议加在：
+- 发色（1.3）
+- 眼睛颜色（1.3）
+- 罩杯（1.3）
+- 长腿（1.2）
 
-**Danbooru 标准**：只用标准 booru tag，禁止中式描述（"jade-like skin"/"gentle gaze"/"phoenix crown"）。原文没写就按世界观给 1 个最合理选项。
-
-**禁止内容**：武器、职业技能、故事背景、心理性格词（"温柔/冷漠/坚强"）、动作动词、bgm。`,
+**禁止内容**：武器、技能、世界观背景、心理性格、动作动词、bgm、人物关系、概念词。`,
                     },
                     {
                         role: 'user',
-                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸）：
+                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸；性格优雅孤傲——**性格不入 prompt**）：
 
-APPEARANCE: (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
-FULL: masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
+APPEARANCE: (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian
 
-示例 2 — 现代年轻女学生（浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服）：
+→ 28 tag。注意 **没有** elegant/regal/dignified/proud/aloof/cold（性格词），**没有** silver-blue / icy 等近义词链。
 
-APPEARANCE: (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
-FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
+示例 2 — 修仙世界 loli 反差萌（外貌 loli 但巨乳；银发蓝眼穿白色道袍；师姐设定——**师姐关系不入 prompt**）：
+
+APPEARANCE: (silver hair:1.3), waist-length hair, half updo, hairpin, (icy blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white robes, taoist robes, wide sleeves, east asian
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, half updo, hairpin, (icy blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white robes, taoist robes, wide sleeves, east asian
+
+→ 30 tag。loli + huge breasts + j-cup **直接写视觉**，不用 extreme contrast / contradicting clothing 这种概念词。
+→ 年龄只 1 类（loli + 强化词），**不**混 young adult / teen。罩杯只 1 个（j-cup），不堆 h/i/k/l 全列。
+
+示例 3 — 现代女学生（浅紫长发凤眼巨乳，穿校服；活泼性格——**性格不入**）：
+
+APPEARANCE: (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian
+
+→ 26 tag。衣服只写大类（school uniform + pleated skirt），不堆 sailor uniform/blazer/cardigan/knee-high socks/neckerchief 等次要细节。
 
 —— 现在轮到你 ——
 
@@ -1168,13 +1192,16 @@ FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavende
 
 ${c.rawContent}
 
-按示例风格输出 APPEARANCE 和 FULL 两段：
-- 总数 **55-75 个 tag**（数过，不能超 75）
-- 每个特征 **1-2 个 tag**，**禁止**近义词链
-- 加权 (tag:1.3) **最多 4 个**，建议加在：发色、眼睛颜色、胸、长腿
-- 七维度都要覆盖（发型/眼睛/肤色/身材-腿/脸/服装/气质），但每维严格按上面的 tag 数表
-- 原文没说的按世界观推断 1 个最准的，**不要 N 选 1**
-- 体型词不冲突（不能同时 slender + curvy + voluptuous，挑 1 个最准的）`,
+按示例的密度和优先级输出 APPEARANCE 和 FULL：
+- 总数 **50-65 个 tag**（数过再输出，超过 65 必须删次要 tag）
+- **重点维度**多写（胸/躯干/臀/大腿/面部/年龄/四肢）；**次要维度**少写（发型/衣服/鞋）
+- 加权 (tag:1.3-1.4) 限 **4 个以内**：发色 / 眼睛颜色 / 罩杯 / 长腿
+- 罩杯 1 个、年龄 1 类、体型 1 类——**不允许并列叠加**
+- 不写性格词（cold/aloof/elegant/regal/proud 等）
+- 不写人物关系（sister/daughter/master/disciple 等）
+- 不写概念词（contrast/contradicting/conflict 等）
+- 不写中式比喻（jade-like skin / cold-colored 等）
+- 没说就按世界观给 1 个最贴切的，**不要列 N 选 1**`,
                     },
                 ],
                 temperature: 0.7,
