@@ -1109,15 +1109,25 @@ async function handleGenerateAppearance(name, btn) {
 2. **每特征 1 个 tag**（最多 2 个）。禁止近义词链。要加重用 (tag:1.3) 加权，**不用**4-5 个同义词刷分。
    反例（错的）：silver hair, silver-blue hair, blue-white hair, icy silver hair → 写成 \`(silver hair:1.3)\` 一个就够
    反例（错的）：huge breasts, massive breasts, gigantic breasts, h-cup, i-cup, j-cup, k-cup, l-cup → 写成 \`(huge breasts:1.3), j-cup\` 两个
-3. **罩杯/年龄/体型只 1 个最准的**。不允许 loli + young adult 同时出现，不允许 h-cup 到 l-cup 全列出。从档案里选最贴切的那一个。
-4. **不从人物关系/性格/故事/世界观提取 tag**。booru tag 只描述**视觉**，不描述心理。
-   - ❌ 原文说"性格冷漠/孤傲/优雅" → **不**写 cold, aloof, elegant, regal, dignified（这是性格词不是视觉词）
-   - ❌ 原文说"她有反差萌（loli巨乳）" → **不**写 extreme contrast / contradicting clothing / clothing contrast（这是概念词不是 booru tag）
-   - ❌ 原文说"她是 user 的师姐/义女/敌人" → **不**写 sister, daughter, enemy（关系词不进 prompt）
-   - ✅ 视觉特征本身，写出来（loli 体型 + huge breasts 是视觉，照实写）
-5. **禁止中式比喻**。jade-like skin / phoenix eyes（OK，是 booru 标准）/ cold skin / cold eyes / phoenix crown / cold-colored hairpin 等都是中式描述，不是 booru tag。
-   - ✅ 标准 booru：fair skin, porcelain skin, blue eyes, almond eyes, hairpin, hair stick
-   - ❌ 中式：jade-like skin, cold skin, cold eyes, cold-colored hairpin, phoenix crown
+   反例（错的）：fair skin, pale skin, icy skin → 写成 \`fair skin\` 一个就够
+   反例（错的）：ice blue dress, white dress, hanfu, ancient chinese clothes, sword dress, simple design → 写成 \`hanfu, white dress\` 两个就够
+3. **罩杯/年龄/体型只 1 个最准的**。不允许 loli + young adult 同时出现，不允许 h-cup 到 l-cup 全列出。
+   反例（错的）：child, young girl, tall for age, lolita figure, young → 写成 \`loli\` 或 \`child\` 选 1 个 + \`petite\`
+4. **不从人物关系/性格/故事/世界观提取 tag**。booru tag 只描述**视觉**，不描述心理或概念。
+   反例（错的）：原文"性格冷漠/孤傲/优雅" → AI 写 cold, aloof, elegant, regal, arrogant, dignified, icy aura ❌
+     → 正确：性格词**完全不写**，只写视觉
+   反例（错的）：原文"反差萌：loli 但巨乳" → AI 写 extreme contrast, contradicting clothing, clothing contrast, lolita figure ❌
+     → 正确：直接写 \`loli, petite, (huge breasts:1.3), j-cup\`，让视觉本身说话
+   反例（错的）：原文"剑修 / 主修剑道" → AI 写 sword dress, swordswoman ❌
+     → 正确：剑修是职业不是视觉。除非角色衣服真叫"剑袍"才写，否则**不写**
+   反例（错的）：原文"她是 user 的师姐/义女/敌人" → AI 写 sister, daughter, master, disciple ❌
+     → 正确：关系词**完全不写**
+   反例（错的）：原文"修炼冰系功法/带冰属性" → AI 写 icy aura, icy skin, icy hair, icy presence ❌
+     → 正确：属性是概念不是视觉。如果原文真说"冰晶头饰/冰蓝色头发"，写 \`(blue hair:1.3), ice crystal hair ornament\`
+5. **禁止中式比喻 + 编造词**。
+   ✅ 标准 booru（这些 OK）：fair skin, porcelain skin, blue eyes, almond eyes, phoenix eyes, hairpin, hair stick, hanfu, taoist robes
+   ❌ 中式比喻：jade-like skin, cold skin, icy skin, snow-white skin, jade-like fingers, cold-colored hairpin, phoenix crown
+   ❌ 概念/编造词：icy aura, icy presence, cold beauty, lolita figure, simple design, sword dress, swordswoman dress, ice aura, frost mark
 
 **严格输出格式**（只输出两行，无前后缀）：
 APPEARANCE: [50-65 个英文 booru tag，逗号分隔]
@@ -1192,16 +1202,22 @@ FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavende
 
 ${c.rawContent}
 
-按示例的密度和优先级输出 APPEARANCE 和 FULL：
-- 总数 **50-65 个 tag**（数过再输出，超过 65 必须删次要 tag）
-- **重点维度**多写（胸/躯干/臀/大腿/面部/年龄/四肢）；**次要维度**少写（发型/衣服/鞋）
-- 加权 (tag:1.3-1.4) 限 **4 个以内**：发色 / 眼睛颜色 / 罩杯 / 长腿
-- 罩杯 1 个、年龄 1 类、体型 1 类——**不允许并列叠加**
-- 不写性格词（cold/aloof/elegant/regal/proud 等）
-- 不写人物关系（sister/daughter/master/disciple 等）
-- 不写概念词（contrast/contradicting/conflict 等）
-- 不写中式比喻（jade-like skin / cold-colored 等）
-- 没说就按世界观给 1 个最贴切的，**不要列 N 选 1**`,
+按示例的密度和优先级输出 APPEARANCE 和 FULL。
+
+**输出前自检清单（每条都打 ✓ 才能输出）**：
+☐ 数过总 tag 数，在 50-65 之间
+☐ 没有任何近义词链（同类只 1-2 个）
+☐ 罩杯 1 个、年龄 1 类、体型 1 类、肤色 1-2 个、衣服 1-2 个
+☐ 没有任何**性格词**（cold/aloof/elegant/regal/proud/arrogant/dignified/graceful 等一个都没有）
+☐ 没有任何**人物关系词**（sister/daughter/master/disciple/wife 等）
+☐ 没有任何**概念/编造词**（icy aura/cold beauty/lolita figure/sword dress/contrast/simple design 等）
+☐ 没有任何**中式比喻**（jade-like/icy skin/cold-colored/phoenix crown 等）
+☐ 没有任何**属性词**（fire/ice/lightning aura/element 等抽象属性）
+☐ 加权 ≤ 4 个，权值在 1.1-1.4 之间
+☐ 衣服只写 1-2 个最大类（hanfu / school uniform / dress），细节交给场景
+☐ 不写姿势、构图、背景、光照、画风词
+
+如有任何 ☐ 没打 ✓，**重做删减**后再输出。`,
                     },
                 ],
                 temperature: 0.7,
