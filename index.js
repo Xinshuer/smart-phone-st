@@ -1098,62 +1098,55 @@ async function handleGenerateAppearance(name, btn) {
             },
             body: JSON.stringify({
                 model: cfg.model || 'deepseek-chat',
-                // DeepSeek V4 thinking 控制（V3 模型会忽略此参数）：禁用思考链 → AI 不会写分析散文
+                // DeepSeek V4 thinking 控制（V3 模型会忽略此参数）：禁用思考链
                 thinking: { type: 'disabled' },
-                // JSON mode：保证 AI 输出严格 JSON，不可能写 prose 分析（DeepSeek 强制约束）
+                // JSON mode（DeepSeek/OpenAI 标准）：保证有效 JSON
                 response_format: { type: 'json_object' },
+                // Multi-shot few-shot：用真实的 user→assistant 轮次让 AI 学会"立刻 JSON"模式
+                // 不再用单条 user 内嵌示例（之前那种容易让 AI 进入"我们来分析"模式）
                 messages: [
                     {
                         role: 'system',
-                        content: `你是 Danbooru/SDXL tag 生成器。输入中文人设，输出 JSON 格式的英文 booru tag。
-
-**输出 JSON Schema**（严格遵守，不可省略字段）：
-{
-  "appearance": "tag1, tag2, tag3, ...",
-  "full": "masterpiece, best quality, highres, absurdres, intricate details, <appearance 全部内容>"
-}
-
-**6 条铁律**：
-1. appearance 总量 50-65 个 tag。SDXL CLIP 75 token 一段，超量互相打架。
-2. 每个特征 1-2 个 tag，**禁止近义词链**。要强调用 (tag:1.3) 加权，不用 4-5 同义词刷分。
-3. 罩杯/年龄/体型/肤色/发色 各**只选 1 个最准的**。不能 h-cup+i-cup+j-cup 都列，不能 loli+young adult 都写。
-4. 只描述**视觉外观**。**禁止**：
-   - 性格词（cold/elegant/aloof/regal/arrogant/proud/dignified/graceful）
-   - 人物关系（sister/daughter/master/disciple/wife）
-   - 概念词（contrast/contradicting/lolita figure/sword dress/simple design）
-   - 属性词（icy aura/cold skin/icy hair/ice presence/frost mark）
-   - 中式比喻（jade-like/cold-colored/phoenix crown/snow-white）
-   - 背景/光照/构图/画风词
-5. 衣服只写 1-2 个大类（hanfu/school uniform/dress/robe），细节交给场景。
-6. 加权 ≤ 4 个，建议加在：发色、眼睛颜色、罩杯、长腿。
-
-**优先级**：
-🔴 重点（多写）：胸 2-3 / 躯干 2-3 / 臀 2 / 大腿 2 / 面部 4-5 / 四肢 1-2 / 年龄 1-2
-🟡 次要（少写）：发色 1-2 / 发型 1-2 / 眼 3 / 肤 1-2 / 衣 1-2 / 鞋 0-1 / 种族 1
-⚫ 不写：姿势、背景、光照、画风、构图`,
+                        content: `你是 Danbooru/SDXL booru tag 生成器。
+输入：中文角色设定。
+输出：严格 JSON，只含 appearance 和 full 两个字符串字段，appearance 是 50-65 个英文 booru tag（逗号分隔），full 是质量词前缀+appearance 内容。
+**禁止**：任何中文分析/思考/markdown/注释。第一字符必须是 \`{\`。
+**视觉 only**：禁止性格词（cold/elegant/aloof）、关系词（sister/master）、概念词（contrast/lolita figure/sword dress）、属性词（icy aura/icy skin）、中式比喻（jade-like/cold-colored）、近义词链、罩杯/年龄叠加、姿势/背景/光照/构图/画风。`,
                     },
+                    // ─── 示例 1：少女古风高冷大胸 ───
                     {
                         role: 'user',
-                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃；性格优雅孤傲——**性格不写**）。输出 JSON：
-
-{"appearance":"(dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian"}
-
-示例 2 — 修仙 loli 反差萌（银发蓝眼 loli 但巨乳；师姐设定——**关系不写**；冰系功法——**属性不写**）：
-
-{"appearance":"(silver hair:1.3), waist-length hair, half updo, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white hanfu, taoist robes, wide sleeves, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, half updo, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white hanfu, taoist robes, wide sleeves, east asian"}
-
-→ 注意：loli + j-cup 直接写视觉，不用 contrast/lolita figure 概念词。年龄只 1 类（loli+强化词）。罩杯只 1 个（j-cup）。无 icy/cold/elegant 等。
-
-—— 现在轮到你 ——
-
-角色设定（中文）：
-
-${c.rawContent}
-
-输出 JSON（严格遵守 schema {"appearance":"...", "full":"..."}）。不要任何 markdown、注释、分析文字。第一个字符就是 \`{\`。`,
+                        content: '紫发凤眼贵妃气质，肤色白皙，穿汉服丝绸，性格优雅孤傲。',
+                    },
+                    {
+                        role: 'assistant',
+                        content: '{"appearance":"(dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian"}',
+                    },
+                    // ─── 示例 2：loli 反差萌（针对你的实际场景）───
+                    {
+                        role: 'user',
+                        content: '岳如烟，8岁 133cm 幼女身材，银白带淡蓝长直发，凤眸（锐利冰冷），白皙如雪皮肤，童颜巨乳 J-cup，巨臀，腰细，外穿冰蓝古风剑裙。性格高冷孤傲，主修剑道冰系功法，是 user 的师姐。',
+                    },
+                    {
+                        role: 'assistant',
+                        content: '{"appearance":"(silver hair:1.3), waist-length hair, straight hair, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, loli, petite, small body, (huge breasts:1.4), j-cup, voluptuous breasts, round breasts, narrow waist, visible collarbones, wide hips, plump ass, thick thighs, (long legs:1.2), beautiful legs, light blue hanfu, wide sleeves, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, straight hair, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, loli, petite, small body, (huge breasts:1.4), j-cup, voluptuous breasts, round breasts, narrow waist, visible collarbones, wide hips, plump ass, thick thighs, (long legs:1.2), beautiful legs, light blue hanfu, wide sleeves, east asian"}',
+                    },
+                    // ─── 示例 3：现代学生 ───
+                    {
+                        role: 'user',
+                        content: '浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服。',
+                    },
+                    {
+                        role: 'assistant',
+                        content: '{"appearance":"(lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian"}',
+                    },
+                    // ─── 真实任务：用户的角色 ───
+                    {
+                        role: 'user',
+                        content: c.rawContent,
                     },
                 ],
-                temperature: 0.4,
+                temperature: 0.3,
                 max_tokens: 2000,
             }),
         });
