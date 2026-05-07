@@ -1076,20 +1076,89 @@ function handlePromptEdit(name, prompt) {
     State.save();
 }
 
+/**
+ * Phase 2: 解析 entry content 里的【视觉档案】表。
+ * 优于 DeepSeek 散文路径：确定性、零温度漂移、零 API 消耗、可手编。
+ * 返回 null 表示未找到表（fallback 到 DeepSeek）。
+ */
+function extractVisualProfile(content) {
+    if (!content || typeof content !== 'string') return null;
+    const m = content.match(/##\s*【视觉档案】[\s\S]*?【\/视觉档案】/);
+    if (!m) return null;
+    const profile = {};
+    for (const line of m[0].split('\n')) {
+        if (!line.trim().startsWith('|')) continue;
+        if (line.includes('字段') && line.includes('booru')) continue; // header
+        if (/^\|[\s\-:]+\|/.test(line)) continue; // markdown separator |---|---|
+        const cells = line.split('|').map(s => s.trim());
+        // cells[0]='', cells[1]=字段, cells[2]=中文描述, cells[3]=booru锚点, cells[4]=''
+        if (cells.length < 4) continue;
+        const field = cells[1];
+        const booru = cells[3];
+        if (!field || !booru || booru === '—') continue;
+        profile[field] = booru;
+    }
+    return Object.keys(profile).length >= 5 ? profile : null;
+}
+
+/**
+ * 把视觉档案 profile 拼成 SD prompt。
+ * 角色锚 tag 加权 1.2（提供原作脸 prior，但让 1.3-1.4 的显式 tag 主导身材/颜色）。
+ */
+function buildAppearanceFromProfile(profile) {
+    const parts = [];
+    const anchor = profile['角色锚 tag'];
+    if (anchor && anchor !== '—' && !anchor.startsWith('(')) {
+        parts.push(`(${anchor}:1.2)`);
+    }
+    const order = [
+        '年龄类', '体型类', '种族', '皮肤', '脸型', '五官', '妆',
+        '头发色', '头发长度', '头发造型', '头发装饰',
+        '眼睛色', '眼睛形状', '眼睛细节',
+        '胸', '腰', '臀', '大腿', '四肢',
+        '服装大类',
+    ];
+    for (const f of order) {
+        const v = profile[f];
+        if (v && v !== '—') parts.push(v);
+    }
+    const appearance = parts.join(', ');
+    const QUALITY = 'masterpiece, best quality, highres, absurdres, intricate details';
+    return { appearance, full: `${QUALITY}, ${appearance}` };
+}
+
 async function handleGenerateAppearance(name, btn) {
     const c = State.findContact(name);
     if (!c?.rawContent) return toastr.warning('联系人没有世界书内容，无法生成外貌 tags');
-
-    const s = State.load();
-    const cfg = s.api || {};
-    if (!cfg.url || !cfg.key) {
-        return toastr.warning('请先在「设置 → 手机 API」填写 URL 和 Key');
-    }
 
     const origText = btn?.textContent || '✨';
     if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
 
     try {
+        // === Phase 2: 优先尝试【视觉档案】表（确定性 + 零 API 消耗）===
+        const profile = extractVisualProfile(c.rawContent);
+        if (profile) {
+            const { appearance, full } = buildAppearanceFromProfile(profile);
+            if (!c.anchor) c.anchor = {};
+            c.anchor.prompt = appearance;
+            c.anchor.sdPrompt = full;
+            State.save();
+            const inp = phoneRoot?.querySelector(`.phone-contact-anchor-edit[data-name="${CSS.escape(name)}"]`);
+            if (inp) inp.value = appearance;
+            console.log(`[smart-phone] handleGenerateAppearance: 视觉档案表命中（${Object.keys(profile).length} 字段），跳过 DeepSeek`);
+            toastr.success(`已从【视觉档案】表提取（${Object.keys(profile).length} 字段，未消耗 API）`);
+            if (btn) { btn.textContent = origText; btn.disabled = false; }
+            return;
+        }
+
+        // === fallback: DeepSeek 散文解析路径（兼容老卡片）===
+        const s = State.load();
+        const cfg = s.api || {};
+        if (!cfg.url || !cfg.key) {
+            if (btn) { btn.textContent = origText; btn.disabled = false; }
+            return toastr.warning('请先在「设置 → 手机 API」填写 URL 和 Key');
+        }
+
         const resp = await fetch(`${cfg.url.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: {
