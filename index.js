@@ -1098,51 +1098,51 @@ async function handleGenerateAppearance(name, btn) {
             },
             body: JSON.stringify({
                 model: cfg.model || 'deepseek-chat',
+                // DeepSeek V4 thinking 控制（V3 模型会忽略此参数）：禁用思考链 → AI 不会写分析散文
+                thinking: { type: 'disabled' },
+                // JSON mode：保证 AI 输出严格 JSON，不可能写 prose 分析（DeepSeek 强制约束）
+                response_format: { type: 'json_object' },
                 messages: [
                     {
                         role: 'system',
-                        content: `你是 Danbooru/SDXL tag 转换器。**只**输出英文 booru tag，**不**做任何中文解释/分析/思考。
+                        content: `你是 Danbooru/SDXL tag 生成器。输入中文人设，输出 JSON 格式的英文 booru tag。
 
-**铁律 6 条**：
-1. 总量 50-65 个 tag。SDXL 75 token 一段，超量打架。
-2. 每个特征 1-2 个 tag，禁止近义词链。要强调用 (tag:1.3) 加权，**不**用 4-5 同义词刷分。
+**输出 JSON Schema**（严格遵守，不可省略字段）：
+{
+  "appearance": "tag1, tag2, tag3, ...",
+  "full": "masterpiece, best quality, highres, absurdres, intricate details, <appearance 全部内容>"
+}
+
+**6 条铁律**：
+1. appearance 总量 50-65 个 tag。SDXL CLIP 75 token 一段，超量互相打架。
+2. 每个特征 1-2 个 tag，**禁止近义词链**。要强调用 (tag:1.3) 加权，不用 4-5 同义词刷分。
 3. 罩杯/年龄/体型/肤色/发色 各**只选 1 个最准的**。不能 h-cup+i-cup+j-cup 都列，不能 loli+young adult 都写。
-4. 只描述**视觉外观**。**禁止**：性格词（cold/elegant/aloof/regal/arrogant/proud），人物关系（sister/daughter/master/disciple），概念词（contrast/contradicting/lolita figure/sword dress/simple design），属性词（icy aura/cold skin/ice presence），中式比喻（jade-like/cold-colored/phoenix crown），背景/光照/构图/画风词。
+4. 只描述**视觉外观**。**禁止**：
+   - 性格词（cold/elegant/aloof/regal/arrogant/proud/dignified/graceful）
+   - 人物关系（sister/daughter/master/disciple/wife）
+   - 概念词（contrast/contradicting/lolita figure/sword dress/simple design）
+   - 属性词（icy aura/cold skin/icy hair/ice presence/frost mark）
+   - 中式比喻（jade-like/cold-colored/phoenix crown/snow-white）
+   - 背景/光照/构图/画风词
 5. 衣服只写 1-2 个大类（hanfu/school uniform/dress/robe），细节交给场景。
 6. 加权 ≤ 4 个，建议加在：发色、眼睛颜色、罩杯、长腿。
 
-**优先级**（重点多写，次要少写）：
-🔴 重点：胸 2-3 / 躯干 2-3 / 臀 2 / 大腿 2 / 面部 4-5 / 四肢 1-2 / 年龄 1-2
-🟡 次要：发色 1-2 / 发型 1-2 / 眼 3 / 肤 1-2 / 衣 1-2 / 鞋 0-1 / 种族 1
-⚫ 不写：姿势、背景、光照、画风、构图
-
-**输出格式**（只两行，第一字符就是 A）：
-APPEARANCE: <tag1>, <tag2>, ...
-FULL: masterpiece, best quality, highres, absurdres, intricate details, <APPEARANCE 全部内容>`,
+**优先级**：
+🔴 重点（多写）：胸 2-3 / 躯干 2-3 / 臀 2 / 大腿 2 / 面部 4-5 / 四肢 1-2 / 年龄 1-2
+🟡 次要（少写）：发色 1-2 / 发型 1-2 / 眼 3 / 肤 1-2 / 衣 1-2 / 鞋 0-1 / 种族 1
+⚫ 不写：姿势、背景、光照、画风、构图`,
                     },
                     {
                         role: 'user',
-                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸；性格优雅孤傲——**性格不入 prompt**）：
+                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃；性格优雅孤傲——**性格不写**）。输出 JSON：
 
-APPEARANCE: (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian
-FULL: masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian
+{"appearance":"(dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian"}
 
-→ 28 tag。注意 **没有** elegant/regal/dignified/proud/aloof/cold（性格词），**没有** silver-blue / icy 等近义词链。
+示例 2 — 修仙 loli 反差萌（银发蓝眼 loli 但巨乳；师姐设定——**关系不写**；冰系功法——**属性不写**）：
 
-示例 2 — 修仙世界 loli 反差萌（外貌 loli 但巨乳；银发蓝眼穿白色道袍；师姐设定——**师姐关系不入 prompt**）：
+{"appearance":"(silver hair:1.3), waist-length hair, half updo, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white hanfu, taoist robes, wide sleeves, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, half updo, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white hanfu, taoist robes, wide sleeves, east asian"}
 
-APPEARANCE: (silver hair:1.3), waist-length hair, half updo, hairpin, (icy blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white robes, taoist robes, wide sleeves, east asian
-FULL: masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, half updo, hairpin, (icy blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, light makeup, loli, petite, small body, childlike, (huge breasts:1.4), j-cup, voluptuous breasts, narrow waist, visible collarbones, wide hips, plump thighs, thigh gap, beautiful legs, white robes, taoist robes, wide sleeves, east asian
-
-→ 30 tag。loli + huge breasts + j-cup **直接写视觉**，不用 extreme contrast / contradicting clothing 这种概念词。
-→ 年龄只 1 类（loli + 强化词），**不**混 young adult / teen。罩杯只 1 个（j-cup），不堆 h/i/k/l 全列。
-
-示例 3 — 现代女学生（浅紫长发凤眼巨乳，穿校服；活泼性格——**性格不入**）：
-
-APPEARANCE: (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian
-FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian
-
-→ 26 tag。衣服只写大类（school uniform + pleated skirt），不堆 sailor uniform/blazer/cardigan/knee-high socks/neckerchief 等次要细节。
+→ 注意：loli + j-cup 直接写视觉，不用 contrast/lolita figure 概念词。年龄只 1 类（loli+强化词）。罩杯只 1 个（j-cup）。无 icy/cold/elegant 等。
 
 —— 现在轮到你 ——
 
@@ -1150,17 +1150,11 @@ FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavende
 
 ${c.rawContent}
 
-**直接输出两行，不要任何分析、推理、解释、思考、注释、说明文字。**
-
-格式（只能是这两行，第一个字符就是 A）：
-APPEARANCE: <tag1>, <tag2>, <tag3>, ...
-FULL: masterpiece, best quality, highres, absurdres, intricate details, <APPEARANCE 全部 tag>
-
-任何其他形式（中文分析、"我们来看看"、"先决定发色"、markdown 标题、prose、思考过程）= 失败。`,
+输出 JSON（严格遵守 schema {"appearance":"...", "full":"..."}）。不要任何 markdown、注释、分析文字。第一个字符就是 \`{\`。`,
                     },
                 ],
                 temperature: 0.4,
-                max_tokens: 1500,
+                max_tokens: 2000,
             }),
         });
 
@@ -1186,28 +1180,41 @@ FULL: masterpiece, best quality, highres, absurdres, intricate details, <APPEARA
             throw new Error(`模型返回空内容 (finish_reason=${finishReason || '?'}) — 可能触发内容过滤，建议用 deepseek-chat`);
         }
 
-        // Parse APPEARANCE / FULL sections
-        const appearanceMatch = result.match(/APPEARANCE:\s*(.+?)(?=\nFULL:|$)/is);
-        const fullMatch = result.match(/FULL:\s*(.+?)$/is);
+        // Parse: prefer JSON (with response_format we should always get valid JSON);
+        // fall back to old APPEARANCE:/FULL: regex for backward compat / older models.
+        let appearanceTags = '';
+        let fullPrompt = '';
 
-        // Reject if AI gave us prose / reasoning instead of two-line format.
-        // Without the APPEARANCE: prefix, the regex falls back to using the entire blob,
-        // which pollutes anchor.prompt with paragraphs of Chinese analysis text.
-        // Better to fail loudly and tell user to retry than silently save garbage.
-        if (!appearanceMatch) {
-            const preview = result.replace(/\s+/g, ' ').slice(0, 120);
-            throw new Error(`AI 没按格式输出（缺 APPEARANCE: 前缀）。预览：${preview}…\n建议换 deepseek-chat 模型或重试一次（V3 偶尔会写成分析散文）`);
+        try {
+            // Strip markdown code fences if AI wrapped JSON in ```json ... ```
+            const cleaned = result.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+            const parsed = JSON.parse(cleaned);
+            if (parsed && typeof parsed.appearance === 'string') {
+                appearanceTags = parsed.appearance.trim();
+                fullPrompt = (parsed.full || '').trim();
+            }
+        } catch {
+            // Not JSON — try legacy APPEARANCE:/FULL: format
+            const appearanceMatch = result.match(/APPEARANCE:\s*(.+?)(?=\nFULL:|$)/is);
+            const fullMatch = result.match(/FULL:\s*(.+?)$/is);
+            if (appearanceMatch) {
+                appearanceTags = appearanceMatch[1].trim().replace(/^[^a-zA-Z1-9(]+/, '').trim();
+                fullPrompt = (fullMatch?.[1] || '').trim();
+            }
         }
-        const rawAppearance = appearanceMatch[1].trim();
-        // Defense: if "appearance" still looks like prose (contains lots of Chinese / no commas), reject
-        const chineseRatio = (rawAppearance.match(/[一-龥]/g) || []).length / Math.max(rawAppearance.length, 1);
-        const commaCount = (rawAppearance.match(/,/g) || []).length;
+
+        // Reject empty / malformed output (prose, reasoning, etc.)
+        if (!appearanceTags) {
+            const preview = result.replace(/\s+/g, ' ').slice(0, 120);
+            throw new Error(`AI 没按格式输出（既不是 JSON 也不是 APPEARANCE: 两行格式）。预览：${preview}…\n建议重试或换 deepseek-chat / deepseek-v4-flash`);
+        }
+
+        // Defense: detect prose leak (excessive Chinese or too few commas)
+        const chineseRatio = (appearanceTags.match(/[一-龥]/g) || []).length / Math.max(appearanceTags.length, 1);
+        const commaCount = (appearanceTags.match(/,/g) || []).length;
         if (chineseRatio > 0.15 || commaCount < 10) {
             throw new Error(`APPEARANCE 内容看起来像中文分析而非 booru tag（中文占比 ${(chineseRatio*100).toFixed(0)}%, ${commaCount} 个逗号）。请重试`);
         }
-
-        const appearanceTags = rawAppearance.replace(/^[^a-zA-Z1-9(]+/, '').trim();
-        const fullPrompt = (fullMatch?.[1] || '').trim();
 
         if (!c.anchor) c.anchor = {};
         c.anchor.prompt = appearanceTags;
