@@ -1149,7 +1149,10 @@ async function handleGenerateAppearance(name, btn) {
                     },
                 ],
                 temperature: 1,
-                max_tokens: 4000,
+                // max_tokens 同时算 reasoning_content（思考链）+ content（JSON 输出）。
+                // 思考链分析 50-65 个 tag 的取舍轻松 2000-3000 token，JSON 本身 ~500-800。
+                // 给 8000 留足余量；DeepSeek V4 上限 32K，8K 完全 safe。
+                max_tokens: 8000,
             }),
         });
 
