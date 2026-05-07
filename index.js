@@ -1098,61 +1098,87 @@ async function handleGenerateAppearance(name, btn) {
             },
             body: JSON.stringify({
                 model: cfg.model || 'deepseek-chat',
-                // JSON mode 保证 content 是有效 JSON。允许 AI 在 reasoning_content
-                // 字段里自由思考分析，最终 content 字段仍被 schema 约束 → 既能反推
-                // 选哪个 tag 最准，又不会污染我们要的输出。
-                response_format: { type: 'json_object' },
-                // 随机 seed 让 reroll 出不同结果（绕过 DeepSeek 服务端的 prompt caching）
-                seed: Math.floor(Math.random() * 2_000_000_000),
-                // Multi-shot few-shot：用真实的 user→assistant 轮次让 AI 学会"立刻 JSON"模式
-                // 不再用单条 user 内嵌示例（之前那种容易让 AI 进入"我们来分析"模式）
                 messages: [
                     {
                         role: 'system',
-                        content: `你是 Danbooru/SDXL booru tag 生成器。
-输入：中文角色设定。
-输出：严格 JSON，只含 appearance 和 full 两个字符串字段，appearance 是 50-65 个英文 booru tag（逗号分隔），full 是质量词前缀+appearance 内容。
-**禁止**：任何中文分析/思考/markdown/注释。第一字符必须是 \`{\`。
-**视觉 only**：禁止性格词（cold/elegant/aloof）、关系词（sister/master）、概念词（contrast/lolita figure/sword dress）、属性词（icy aura/icy skin）、中式比喻（jade-like/cold-colored）、近义词链、罩杯/年龄叠加、姿势/背景/光照/构图/画风。`,
+                        content: `你是 SDXL / Danbooru tag 专家。把中文人设转成精准、紧凑的英文 booru tag。
+
+**核心原则（违反 = 失败）**：
+1. **总量控制**：APPEARANCE 严格在 **55-75 个 tag** 之间。SDXL token 上限 75 一段，超过会被切段稀释，过量 tag 反而互相打架，画质崩坏。
+2. **不堆近义词**：每个特征**最多 2 个 tag**（1 主词 + 0-1 辅助）。要强调用加权 (tag:1.3)，**禁止**用 4-5 个近义词刷权重——模型会平均它们而不是叠加。
+3. **不冲突**：不能同时写 "slender, curvy, voluptuous, hourglass" 这种互相矛盾的体型词，挑 1-2 个最准的。
+4. **从原文出发**：原文没写就按世界观推断 1 个准确选项，**不要给 N 选 1 让模型猜**。
+
+**严格输出格式**（只输出两行，无前后缀）：
+APPEARANCE: [55-75 个英文 booru tag，逗号分隔]
+FULL: [质量词前缀 + APPEARANCE 内容；禁场景/光照/构图/视角/画风词]
+
+**FULL 内容白名单**（只能这两段）：
+- 质量词前缀：masterpiece, best quality, highres, absurdres, intricate details
+- APPEARANCE 全部 tag
+
+**FULL 黑名单**（出现一个 = 不合格）：
+- 背景：simple background / white background / studio / outdoor / indoor / scenery
+- 光照：studio lighting / soft lighting / cinematic lighting / natural lighting
+- 构图：upper body portrait / full body / looking at viewer / from above / close-up / 1girl / solo
+- 画风：photorealistic / hyperrealistic / anime style / illustration / detailed skin / depth of field / sharp focus
+- 理由：这些由帖子场景动态注入；FULL 只描人物本身，不锁场景/画风。
+
+**七维度精简清单**（每维 N 个 tag，**严格遵守**）：
+
+| 维度 | tag 数 | 写法 |
+|------|--------|------|
+| 1. 发型 | 5-8 | 1 颜色（加权 1.3）+ 1 长度 + 1 质感 + 1 造型 + 1-2 装饰 |
+| 2. 眼睛 | 4-6 | 1 颜色（加权 1.3）+ 1 形状 + 1-2 修饰（long eyelashes 等）|
+| 3. 肤色 | 2-3 | 1 主色（fair/pale/tan/dark skin）+ 1 强化（porcelain/smooth/healthy） |
+| 4. 身材 | 12-18 | 1 身高 + 1 体型 + 胸（加权 1.3，1-2 词）+ 1 腰 + 1 臀 + 2-3 腿（**重点**）+ 1-2 其它 |
+| 5. 脸型 | 4-6 | 1 脸型 + 1 颧骨/下巴 + 1 鼻 + 1 唇 + 1-2 妆 |
+| 6. 服装 | 5-8 | 1 大类（hanfu/school uniform/business suit）+ 2-3 款式细节 + 1 材质 + 1-2 配饰 |
+| 7. 气质/年龄 | 3-5 | 1 年龄 + 1 种族 + 1-2 气质 |
+
+**身材腿型重点（用户特别要求）**：长腿/美腿务必写到，但精简：
+- 长腿：long legs（可加权 1.2）
+- 大腿（按设定选）：thick thighs / thigh gap / slim thighs（**只选一个**）
+- 美感：beautiful legs（够了，不要再堆 smooth/shapely/model 等）
+
+**加权规则**：
+- 加权用 (tag:1.3)，**最多 4 个加权 tag**（建议：发色、眼睛、胸、长腿）
+- 加权值范围 1.1-1.4，超出会过度
+- **不**用近义词链刷权重（这是新手错误，效果反而差）
+
+**Danbooru 标准**：只用标准 booru tag，禁止中式描述（"jade-like skin"/"gentle gaze"/"phoenix crown"）。原文没写就按世界观给 1 个最合理选项。
+
+**禁止内容**：武器、职业技能、故事背景、心理性格词（"温柔/冷漠/坚强"）、动作动词、bgm。`,
                     },
-                    // ─── 示例 1：少女古风高冷大胸 ───
                     {
                         role: 'user',
-                        content: '紫发凤眼贵妃气质，肤色白皙，穿汉服丝绸，性格优雅孤傲。',
-                    },
-                    {
-                        role: 'assistant',
-                        content: '{"appearance":"(dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, hair bun, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, mature female, tall female, hourglass figure, (huge breasts:1.3), j-cup, narrow waist, visible collarbones, wide hips, thick thighs, (long legs:1.2), hanfu, silk robes, wide sleeves, jade pendant, east asian"}',
-                    },
-                    // ─── 示例 2：loli 反差萌（针对你的实际场景）───
-                    {
-                        role: 'user',
-                        content: '岳如烟，8岁 133cm 幼女身材，银白带淡蓝长直发，凤眸（锐利冰冷），白皙如雪皮肤，童颜巨乳 J-cup，巨臀，腰细，外穿冰蓝古风剑裙。性格高冷孤傲，主修剑道冰系功法，是 user 的师姐。',
-                    },
-                    {
-                        role: 'assistant',
-                        content: '{"appearance":"(silver hair:1.3), waist-length hair, straight hair, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, loli, petite, small body, (huge breasts:1.4), j-cup, voluptuous breasts, round breasts, narrow waist, visible collarbones, wide hips, plump ass, thick thighs, (long legs:1.2), beautiful legs, light blue hanfu, wide sleeves, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (silver hair:1.3), waist-length hair, straight hair, hairpin, (light blue eyes:1.3), phoenix eyes, long eyelashes, fair skin, porcelain skin, oval face, sharp jawline, delicate nose, thin lips, loli, petite, small body, (huge breasts:1.4), j-cup, voluptuous breasts, round breasts, narrow waist, visible collarbones, wide hips, plump ass, thick thighs, (long legs:1.2), beautiful legs, light blue hanfu, wide sleeves, east asian"}',
-                    },
-                    // ─── 示例 3：现代学生 ───
-                    {
-                        role: 'user',
-                        content: '浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服。',
-                    },
-                    {
-                        role: 'assistant',
-                        content: '{"appearance":"(lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian","full":"masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, hair ribbon, (purple eyes:1.3), phoenix eyes, long eyelashes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, young adult, slender, hourglass figure, (huge breasts:1.3), h-cup, narrow waist, visible collarbones, wide hips, thigh gap, (long legs:1.2), school uniform, pleated skirt, east asian"}',
-                    },
-                    // ─── 真实任务：用户的角色 ───
-                    {
-                        role: 'user',
-                        content: c.rawContent,
+                        content: `示例 1 — 古风修仙女主（紫发凤眼大胸贵妃气质，肤色白皙，穿汉服丝绸）：
+
+APPEARANCE: (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (dark purple hair:1.3), waist-length hair, silky hair, hair bun, jeweled hair ornament, hair stick, (purple eyes:1.3), almond eyes, long eyelashes, eyeliner, fair skin, porcelain skin, oval face, high cheekbones, delicate nose, thin lips, light makeup, tall female, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thick thighs, (long legs:1.2), beautiful legs, visible collarbones, hanfu, silk robes, wide sleeves, embroidered pattern, sash, jade pendant, mature female, east asian, elegant, regal
+
+示例 2 — 现代年轻女学生（浅紫长发凤眼活泼巨乳，肤色白嫩，穿校服）：
+
+APPEARANCE: (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
+FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavender hair:1.3), long hair, wavy hair, side-swept hair, hair ribbon, (purple eyes:1.2), phoenix eyes, long eyelashes, sparkling eyes, fair skin, smooth skin, oval face, delicate nose, parted lips, lip gloss, blush, young adult, hourglass figure, (huge breasts:1.3), narrow waist, wide hips, thigh gap, (long legs:1.2), beautiful legs, visible collarbones, school uniform, sailor uniform, pleated skirt, neckerchief, knee-high socks, blazer, teen, east asian, cheerful, charming
+
+—— 现在轮到你 ——
+
+角色设定（中文）：
+
+${c.rawContent}
+
+按示例风格输出 APPEARANCE 和 FULL 两段：
+- 总数 **55-75 个 tag**（数过，不能超 75）
+- 每个特征 **1-2 个 tag**，**禁止**近义词链
+- 加权 (tag:1.3) **最多 4 个**，建议加在：发色、眼睛颜色、胸、长腿
+- 七维度都要覆盖（发型/眼睛/肤色/身材-腿/脸/服装/气质），但每维严格按上面的 tag 数表
+- 原文没说的按世界观推断 1 个最准的，**不要 N 选 1**
+- 体型词不冲突（不能同时 slender + curvy + voluptuous，挑 1 个最准的）`,
                     },
                 ],
-                temperature: 1,
-                // max_tokens 同时算 reasoning_content（思考链）+ content（JSON 输出）。
-                // 思考链分析 50-65 个 tag 的取舍轻松 2000-3000 token，JSON 本身 ~500-800。
-                // 给 8000 留足余量；DeepSeek V4 上限 32K，8K 完全 safe。
-                max_tokens: 8000,
+                temperature: 0.7,
+                max_tokens: 2000,
             }),
         });
 
@@ -1165,61 +1191,24 @@ async function handleGenerateAppearance(name, btn) {
         console.log('[smart-phone] appearance API raw:', JSON.stringify(data).slice(0, 800));
         const msg = data?.choices?.[0]?.message || {};
         const finishReason = data?.choices?.[0]?.finish_reason || '';
-        // **只取 content** —— 这是 JSON mode 下被 schema 约束的最终输出。
-        // 绝对不 fallback 到 reasoning_content（那是中文思考链，会污染解析）。
-        // 如果 content 真的空了，说明 token 预算被思考链耗尽，应该报错让用户调高 max_tokens
-        // 而不是把思考内容当 prompt 写入 anchor。
-        let result = (msg.content || '').trim();
-        if (!result && msg.reasoning_content) {
-            throw new Error(`AI 思考链占满 token 预算，没生成最终输出。当前 max_tokens=8000 已用完。请重试，或检查角色档案是否过长导致分析过深。`);
-        }
+        // DeepSeek-R1 puts reasoning in reasoning_content; content may be empty
+        let result = (msg.content || msg.reasoning_content || '').trim();
 
         // Strip <think> / <thinking> blocks (DeepSeek-R1 etc.)
         result = result.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
         result = result.replace(/<think(?:ing)?>[\s\S]*$/gi, '').trim();
-        // NOTE: do NOT strip leading non-alphanumeric characters here — that would eat
-        // the JSON opening `{` and break parsing. The legacy APPEARANCE: regex path
-        // handles its own leading-prefix stripping below.
+        // Strip leading non-tag characters (e.g. "以下是..." preamble)
+        result = result.replace(/^[^a-zA-Z1-9(]+/, '').trim();
 
         if (!result) {
             throw new Error(`模型返回空内容 (finish_reason=${finishReason || '?'}) — 可能触发内容过滤，建议用 deepseek-chat`);
         }
 
-        // Parse: prefer JSON (with response_format we should always get valid JSON);
-        // fall back to old APPEARANCE:/FULL: regex for backward compat / older models.
-        let appearanceTags = '';
-        let fullPrompt = '';
-
-        try {
-            // Strip markdown code fences if AI wrapped JSON in ```json ... ```
-            const cleaned = result.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-            const parsed = JSON.parse(cleaned);
-            if (parsed && typeof parsed.appearance === 'string') {
-                appearanceTags = parsed.appearance.trim();
-                fullPrompt = (parsed.full || '').trim();
-            }
-        } catch {
-            // Not JSON — try legacy APPEARANCE:/FULL: format
-            const appearanceMatch = result.match(/APPEARANCE:\s*(.+?)(?=\nFULL:|$)/is);
-            const fullMatch = result.match(/FULL:\s*(.+?)$/is);
-            if (appearanceMatch) {
-                appearanceTags = appearanceMatch[1].trim().replace(/^[^a-zA-Z1-9(]+/, '').trim();
-                fullPrompt = (fullMatch?.[1] || '').trim();
-            }
-        }
-
-        // Reject empty / malformed output (prose, reasoning, etc.)
-        if (!appearanceTags) {
-            const preview = result.replace(/\s+/g, ' ').slice(0, 120);
-            throw new Error(`AI 没按格式输出（既不是 JSON 也不是 APPEARANCE: 两行格式）。预览：${preview}…\n建议重试或换 deepseek-chat / deepseek-v4-flash`);
-        }
-
-        // Defense: detect prose leak (excessive Chinese or too few commas)
-        const chineseRatio = (appearanceTags.match(/[一-龥]/g) || []).length / Math.max(appearanceTags.length, 1);
-        const commaCount = (appearanceTags.match(/,/g) || []).length;
-        if (chineseRatio > 0.15 || commaCount < 10) {
-            throw new Error(`APPEARANCE 内容看起来像中文分析而非 booru tag（中文占比 ${(chineseRatio*100).toFixed(0)}%, ${commaCount} 个逗号）。请重试`);
-        }
+        // Parse APPEARANCE / FULL sections
+        const appearanceMatch = result.match(/APPEARANCE:\s*(.+?)(?=\nFULL:|$)/is);
+        const fullMatch = result.match(/FULL:\s*(.+?)$/is);
+        const appearanceTags = (appearanceMatch?.[1] || result).trim().replace(/^[^a-zA-Z1-9(]+/, '').trim();
+        const fullPrompt = (fullMatch?.[1] || '').trim();
 
         if (!c.anchor) c.anchor = {};
         c.anchor.prompt = appearanceTags;
