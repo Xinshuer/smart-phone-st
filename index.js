@@ -1165,8 +1165,14 @@ async function handleGenerateAppearance(name, btn) {
         console.log('[smart-phone] appearance API raw:', JSON.stringify(data).slice(0, 800));
         const msg = data?.choices?.[0]?.message || {};
         const finishReason = data?.choices?.[0]?.finish_reason || '';
-        // DeepSeek-R1 puts reasoning in reasoning_content; content may be empty
-        let result = (msg.content || msg.reasoning_content || '').trim();
+        // **只取 content** —— 这是 JSON mode 下被 schema 约束的最终输出。
+        // 绝对不 fallback 到 reasoning_content（那是中文思考链，会污染解析）。
+        // 如果 content 真的空了，说明 token 预算被思考链耗尽，应该报错让用户调高 max_tokens
+        // 而不是把思考内容当 prompt 写入 anchor。
+        let result = (msg.content || '').trim();
+        if (!result && msg.reasoning_content) {
+            throw new Error(`AI 思考链占满 token 预算，没生成最终输出。当前 max_tokens=8000 已用完。请重试，或检查角色档案是否过长导致分析过深。`);
+        }
 
         // Strip <think> / <thinking> blocks (DeepSeek-R1 etc.)
         result = result.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
