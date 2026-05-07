@@ -1166,8 +1166,9 @@ async function handleGenerateAppearance(name, btn) {
         // Strip <think> / <thinking> blocks (DeepSeek-R1 etc.)
         result = result.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
         result = result.replace(/<think(?:ing)?>[\s\S]*$/gi, '').trim();
-        // Strip leading non-tag characters (e.g. "以下是..." preamble)
-        result = result.replace(/^[^a-zA-Z1-9(]+/, '').trim();
+        // NOTE: do NOT strip leading non-alphanumeric characters here — that would eat
+        // the JSON opening `{` and break parsing. The legacy APPEARANCE: regex path
+        // handles its own leading-prefix stripping below.
 
         if (!result) {
             throw new Error(`模型返回空内容 (finish_reason=${finishReason || '?'}) — 可能触发内容过滤，建议用 deepseek-chat`);
