@@ -1098,10 +1098,12 @@ async function handleGenerateAppearance(name, btn) {
             },
             body: JSON.stringify({
                 model: cfg.model || 'deepseek-chat',
-                // DeepSeek V4 thinking 控制（V3 模型会忽略此参数）：禁用思考链
-                thinking: { type: 'disabled' },
-                // JSON mode（DeepSeek/OpenAI 标准）：保证有效 JSON
+                // JSON mode 保证 content 是有效 JSON。允许 AI 在 reasoning_content
+                // 字段里自由思考分析，最终 content 字段仍被 schema 约束 → 既能反推
+                // 选哪个 tag 最准，又不会污染我们要的输出。
                 response_format: { type: 'json_object' },
+                // 随机 seed 让 reroll 出不同结果（绕过 DeepSeek 服务端的 prompt caching）
+                seed: Math.floor(Math.random() * 2_000_000_000),
                 // Multi-shot few-shot：用真实的 user→assistant 轮次让 AI 学会"立刻 JSON"模式
                 // 不再用单条 user 内嵌示例（之前那种容易让 AI 进入"我们来分析"模式）
                 messages: [
@@ -1146,8 +1148,8 @@ async function handleGenerateAppearance(name, btn) {
                         content: c.rawContent,
                     },
                 ],
-                temperature: 0.3,
-                max_tokens: 2000,
+                temperature: 1,
+                max_tokens: 4000,
             }),
         });
 
