@@ -1101,76 +1101,24 @@ async function handleGenerateAppearance(name, btn) {
                 messages: [
                     {
                         role: 'system',
-                        content: `你是 SDXL / Danbooru tag 专家。把中文人设转成精准、紧凑的英文 booru tag。
+                        content: `你是 Danbooru/SDXL tag 转换器。**只**输出英文 booru tag，**不**做任何中文解释/分析/思考。
 
-**5 条铁律（违反任何一条 = 失败）**：
+**铁律 6 条**：
+1. 总量 50-65 个 tag。SDXL 75 token 一段，超量打架。
+2. 每个特征 1-2 个 tag，禁止近义词链。要强调用 (tag:1.3) 加权，**不**用 4-5 同义词刷分。
+3. 罩杯/年龄/体型/肤色/发色 各**只选 1 个最准的**。不能 h-cup+i-cup+j-cup 都列，不能 loli+young adult 都写。
+4. 只描述**视觉外观**。**禁止**：性格词（cold/elegant/aloof/regal/arrogant/proud），人物关系（sister/daughter/master/disciple），概念词（contrast/contradicting/lolita figure/sword dress/simple design），属性词（icy aura/cold skin/ice presence），中式比喻（jade-like/cold-colored/phoenix crown），背景/光照/构图/画风词。
+5. 衣服只写 1-2 个大类（hanfu/school uniform/dress/robe），细节交给场景。
+6. 加权 ≤ 4 个，建议加在：发色、眼睛颜色、罩杯、长腿。
 
-1. **总量上限**：APPEARANCE **严格 50-65 个 tag**（数过再输出）。SDXL CLIP 75 token 一段，过量会切段且各 tag 互相打架。
-2. **每特征 1 个 tag**（最多 2 个）。禁止近义词链。要加重用 (tag:1.3) 加权，**不用**4-5 个同义词刷分。
-   反例（错的）：silver hair, silver-blue hair, blue-white hair, icy silver hair → 写成 \`(silver hair:1.3)\` 一个就够
-   反例（错的）：huge breasts, massive breasts, gigantic breasts, h-cup, i-cup, j-cup, k-cup, l-cup → 写成 \`(huge breasts:1.3), j-cup\` 两个
-   反例（错的）：fair skin, pale skin, icy skin → 写成 \`fair skin\` 一个就够
-   反例（错的）：ice blue dress, white dress, hanfu, ancient chinese clothes, sword dress, simple design → 写成 \`hanfu, white dress\` 两个就够
-3. **罩杯/年龄/体型只 1 个最准的**。不允许 loli + young adult 同时出现，不允许 h-cup 到 l-cup 全列出。
-   反例（错的）：child, young girl, tall for age, lolita figure, young → 写成 \`loli\` 或 \`child\` 选 1 个 + \`petite\`
-4. **不从人物关系/性格/故事/世界观提取 tag**。booru tag 只描述**视觉**，不描述心理或概念。
-   反例（错的）：原文"性格冷漠/孤傲/优雅" → AI 写 cold, aloof, elegant, regal, arrogant, dignified, icy aura ❌
-     → 正确：性格词**完全不写**，只写视觉
-   反例（错的）：原文"反差萌：loli 但巨乳" → AI 写 extreme contrast, contradicting clothing, clothing contrast, lolita figure ❌
-     → 正确：直接写 \`loli, petite, (huge breasts:1.3), j-cup\`，让视觉本身说话
-   反例（错的）：原文"剑修 / 主修剑道" → AI 写 sword dress, swordswoman ❌
-     → 正确：剑修是职业不是视觉。除非角色衣服真叫"剑袍"才写，否则**不写**
-   反例（错的）：原文"她是 user 的师姐/义女/敌人" → AI 写 sister, daughter, master, disciple ❌
-     → 正确：关系词**完全不写**
-   反例（错的）：原文"修炼冰系功法/带冰属性" → AI 写 icy aura, icy skin, icy hair, icy presence ❌
-     → 正确：属性是概念不是视觉。如果原文真说"冰晶头饰/冰蓝色头发"，写 \`(blue hair:1.3), ice crystal hair ornament\`
-5. **禁止中式比喻 + 编造词**。
-   ✅ 标准 booru（这些 OK）：fair skin, porcelain skin, blue eyes, almond eyes, phoenix eyes, hairpin, hair stick, hanfu, taoist robes
-   ❌ 中式比喻：jade-like skin, cold skin, icy skin, snow-white skin, jade-like fingers, cold-colored hairpin, phoenix crown
-   ❌ 概念/编造词：icy aura, icy presence, cold beauty, lolita figure, simple design, sword dress, swordswoman dress, ice aura, frost mark
+**优先级**（重点多写，次要少写）：
+🔴 重点：胸 2-3 / 躯干 2-3 / 臀 2 / 大腿 2 / 面部 4-5 / 四肢 1-2 / 年龄 1-2
+🟡 次要：发色 1-2 / 发型 1-2 / 眼 3 / 肤 1-2 / 衣 1-2 / 鞋 0-1 / 种族 1
+⚫ 不写：姿势、背景、光照、画风、构图
 
-**严格输出格式**（只输出两行，无前后缀）：
-APPEARANCE: [50-65 个英文 booru tag，逗号分隔]
-FULL: [质量词前缀 + APPEARANCE；禁场景/光照/构图/视角/画风词]
-
-**FULL 黑名单**（出现 = 不合格）：背景词、光照词、构图视角（1girl, solo, looking at viewer, full body, close-up 等）、画风词（photorealistic, anime style 等）。这些由帖子场景动态注入。
-
-**优先级 + tag 配额表**（重点维度多写，次要少写或省略）：
-
-【**🔴 重点维度（必须精准）**】
-
-| 维度 | tag 数 | 必含 |
-|------|--------|------|
-| 胸 | 2-3 | (cup-size:1.3) + 形状（如 round / heavy）+ 可选 cleavage 类形容 |
-| 躯干（腰/腹） | 2-3 | 1 腰型（narrow/slim/wasp waist）+ visible collarbones + 可选 hip bones / flat stomach |
-| 臀 | 2 | 1 臀型（wide hips / huge ass / plump ass / small ass）+ 1 形状或加权 |
-| 大腿 | 2 | thick thighs / thigh gap / slim thighs **只选 1 个** + 可选 (long legs:1.2) |
-| 面部 | 4-5 | 1 脸型（oval/round/heart-shaped/V-line）+ 1 五官（jawline/cheekbone/nose）+ 1 唇 + 1 妆 + 1 备选 |
-| 四肢 | 1-2 | (long legs:1.2) 或 long arms 或 slender limbs / petite limbs，按身材选 1-2 |
-| 年龄 | 1-2 | **只选 1 个最贴切**：loli / child / teen / young adult / adult / mature / elderly + 1 强化（如 youthful / aged） |
-
-【**🟡 次要维度（轻量描写）**】
-
-| 维度 | tag 数 | 写法 |
-|------|--------|------|
-| 头发颜色 | 1-2 | (颜色:1.3) + 可选第二颜色（如 gradient hair） |
-| 眼睛 | 3 | (颜色:1.3) + 形状（almond/phoenix/fox eyes 等）+ 可选 long eyelashes |
-| 肤色 | 1-2 | fair/pale/tan/dark skin + 可选 1 个强化（porcelain/healthy/sun-kissed/smooth）|
-| 发型 | 1-2 | 长度 + 造型（如 long hair, ponytail）。装饰省略或 1 个 hair ornament |
-| 衣服 | 1-2 | 1 大类（hanfu / school uniform / casual / dress / robe）。**只 1-2 tag**，款式细节交给场景注入 |
-| 鞋袜 | 0-1 | 默认省略；如对角色身份关键（如 thigh-high boots 是萝莉萌点）才写 1 个 |
-| 种族 | 1 | east asian / west asian / european，最多 1 个 |
-| 姿势 / 背景 | 0 | **完全不写**，由帖子场景动态注入 |
-
-**总配额**：重点 ~14-17 + 次要 ~9-13 + 缓冲 = **50-65 个 tag**
-
-**加权规则**：(tag:1.3)，**最多 4 个加权点**，建议加在：
-- 发色（1.3）
-- 眼睛颜色（1.3）
-- 罩杯（1.3）
-- 长腿（1.2）
-
-**禁止内容**：武器、技能、世界观背景、心理性格、动作动词、bgm、人物关系、概念词。`,
+**输出格式**（只两行，第一字符就是 A）：
+APPEARANCE: <tag1>, <tag2>, ...
+FULL: masterpiece, best quality, highres, absurdres, intricate details, <APPEARANCE 全部内容>`,
                     },
                     {
                         role: 'user',
@@ -1202,26 +1150,17 @@ FULL: masterpiece, best quality, highres, absurdres, intricate details, (lavende
 
 ${c.rawContent}
 
-按示例的密度和优先级输出 APPEARANCE 和 FULL。
+**直接输出两行，不要任何分析、推理、解释、思考、注释、说明文字。**
 
-**输出前自检清单（每条都打 ✓ 才能输出）**：
-☐ 数过总 tag 数，在 50-65 之间
-☐ 没有任何近义词链（同类只 1-2 个）
-☐ 罩杯 1 个、年龄 1 类、体型 1 类、肤色 1-2 个、衣服 1-2 个
-☐ 没有任何**性格词**（cold/aloof/elegant/regal/proud/arrogant/dignified/graceful 等一个都没有）
-☐ 没有任何**人物关系词**（sister/daughter/master/disciple/wife 等）
-☐ 没有任何**概念/编造词**（icy aura/cold beauty/lolita figure/sword dress/contrast/simple design 等）
-☐ 没有任何**中式比喻**（jade-like/icy skin/cold-colored/phoenix crown 等）
-☐ 没有任何**属性词**（fire/ice/lightning aura/element 等抽象属性）
-☐ 加权 ≤ 4 个，权值在 1.1-1.4 之间
-☐ 衣服只写 1-2 个最大类（hanfu / school uniform / dress），细节交给场景
-☐ 不写姿势、构图、背景、光照、画风词
+格式（只能是这两行，第一个字符就是 A）：
+APPEARANCE: <tag1>, <tag2>, <tag3>, ...
+FULL: masterpiece, best quality, highres, absurdres, intricate details, <APPEARANCE 全部 tag>
 
-如有任何 ☐ 没打 ✓，**重做删减**后再输出。`,
+任何其他形式（中文分析、"我们来看看"、"先决定发色"、markdown 标题、prose、思考过程）= 失败。`,
                     },
                 ],
-                temperature: 0.7,
-                max_tokens: 2000,
+                temperature: 0.4,
+                max_tokens: 1500,
             }),
         });
 
@@ -1250,7 +1189,24 @@ ${c.rawContent}
         // Parse APPEARANCE / FULL sections
         const appearanceMatch = result.match(/APPEARANCE:\s*(.+?)(?=\nFULL:|$)/is);
         const fullMatch = result.match(/FULL:\s*(.+?)$/is);
-        const appearanceTags = (appearanceMatch?.[1] || result).trim().replace(/^[^a-zA-Z1-9(]+/, '').trim();
+
+        // Reject if AI gave us prose / reasoning instead of two-line format.
+        // Without the APPEARANCE: prefix, the regex falls back to using the entire blob,
+        // which pollutes anchor.prompt with paragraphs of Chinese analysis text.
+        // Better to fail loudly and tell user to retry than silently save garbage.
+        if (!appearanceMatch) {
+            const preview = result.replace(/\s+/g, ' ').slice(0, 120);
+            throw new Error(`AI 没按格式输出（缺 APPEARANCE: 前缀）。预览：${preview}…\n建议换 deepseek-chat 模型或重试一次（V3 偶尔会写成分析散文）`);
+        }
+        const rawAppearance = appearanceMatch[1].trim();
+        // Defense: if "appearance" still looks like prose (contains lots of Chinese / no commas), reject
+        const chineseRatio = (rawAppearance.match(/[一-龥]/g) || []).length / Math.max(rawAppearance.length, 1);
+        const commaCount = (rawAppearance.match(/,/g) || []).length;
+        if (chineseRatio > 0.15 || commaCount < 10) {
+            throw new Error(`APPEARANCE 内容看起来像中文分析而非 booru tag（中文占比 ${(chineseRatio*100).toFixed(0)}%, ${commaCount} 个逗号）。请重试`);
+        }
+
+        const appearanceTags = rawAppearance.replace(/^[^a-zA-Z1-9(]+/, '').trim();
         const fullPrompt = (fullMatch?.[1] || '').trim();
 
         if (!c.anchor) c.anchor = {};
