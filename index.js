@@ -540,8 +540,34 @@ async function onMessageReceived() {
     const msg = ctx.chat[idx];
     if (!msg || msg.is_user) return;
 
+    // v0.12.3 Bug 3 修复：先剥 <think>/<thinking> 块（DeepSeek-R1/V3 推理模型常加），
+    // 再 parse PHONE 块。否则 reasoning prose 漏出来会显示在 ST 气泡里。
+    if (msg.mes && /<think(?:ing)?>/i.test(msg.mes)) {
+        let cleaned = msg.mes
+            .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+            .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
+            .trim();
+        if (cleaned !== msg.mes) {
+            msg.mes = cleaned || '📱';
+            try { ctx.saveChatDebounced ? ctx.saveChatDebounced() : (ctx.saveChat && ctx.saveChat()); } catch {}
+        }
+    }
+
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
-    if (!parsed) return;
+    if (!parsed) {
+        // Bug 3 兜底：模型完全没输出 PHONE 块（只有 reasoning prose / 闲聊），
+        // 检测中文推理特征（"用户" + "我需要"/"首先"/"我们来看看"/"对话连贯性"等）→
+        // 替换为 📱 占位避免散文污染聊天，并不持久化（让用户能 regenerate）。
+        if (msg.mes && msg.mes.length > 200) {
+            const reasoningHints = ['我需要', '首先', '我们来看看', '让我', '用户的任务', '对话连贯性', '用户希望', '考虑到', '所以我'];
+            const hits = reasoningHints.filter(h => msg.mes.includes(h)).length;
+            if (hits >= 2) {
+                msg.mes = '📱（AI 输出推理散文未生成 PHONE 块，请点 ↩ 重新生成）';
+                try { ctx.saveChatDebounced ? ctx.saveChatDebounced() : (ctx.saveChat && ctx.saveChat()); } catch {}
+            }
+        }
+        return;
+    }
 
     // Rescue <pic> tags the AI placed in prose (outside PHONE block) — assign them to SMS
     // messages that don't already have a pic, so images still appear in the phone UI.
@@ -1833,7 +1859,11 @@ function bindGlobalEventDelegation() {
         toggleSelection(url, cell);
     });
 
-    // Click delegation: selection toggle in selection mode, otherwise lightbox.
+    // Click delegation: short tap ALWAYS opens lightbox (universal mobile expectation).
+    // Selection management is only via long-press or 🗂 toolbar button.
+    // v0.12.3: 旧逻辑"selectionMode + chat scope → toggle selection 而不开 lightbox"
+    // 在手机上极易导致用户莫名进入 selection mode 后所有点击失效（toolbar 可能溢出屏幕看不到）。
+    // 改成 tap 永远开图，长按管理选择。WeChat / Photos / Instagram 全部这套交互。
     phoneRoot.addEventListener('click', (e) => {
         // Long-press fired moments ago — eat the trailing click so we don't toggle the same cell off
         if (suppressNextClick) {
@@ -1847,15 +1877,6 @@ function bindGlobalEventDelegation() {
         const cell = e.target.closest && e.target.closest('.phone-img-cell');
         const img = e.target.closest && e.target.closest('img.phone-pic');
         if (!cell || !img) return;
-        // Only intercept clicks on chat-thread images for selection toggle.
-        // Clicks on moments/forum/xhs images always open lightbox (even while in selection mode).
-        if (selectionMode && isInChatScope(cell)) {
-            e.preventDefault();
-            e.stopPropagation();
-            const url = getImageUrlFromCell(cell);
-            if (url) toggleSelection(url, cell);
-            return;
-        }
         if (img.src) openImageLightbox(img.src);
     });
 
