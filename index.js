@@ -1662,18 +1662,51 @@ async function handleFetchModels() {
 async function handleComfyuiTest() {
     const url = getActiveComfyuiUrl();
     if (!url) return toastr.warning('请先填写 ComfyUI 地址');
-    toastr.info('测试 ComfyUI 连接…');
+
+    const cleanUrl = url.replace(/\/+$/, '');
+    const isLoopback = /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)\b/i.test(cleanUrl);
+    const pageIsHttps = location.protocol === 'https:';
+    const urlIsHttp = /^http:\/\//i.test(cleanUrl);
+
+    // Pre-flight diagnostics — surface common failure modes before the actual fetch
+    if (IS_TOUCH_DEVICE && isLoopback) {
+        toastr.error(
+            `❌ 手机端不能用 ${cleanUrl} —— 127.0.0.1/localhost 在手机上指向手机自己，不是运行 ComfyUI 的电脑。请在「📱 ComfyUI 地址（手机）」填电脑的局域网 IP，例如 http://192.168.1.x:8188`,
+            '', { timeOut: 10_000, extendedTimeOut: 5_000 },
+        );
+        return;
+    }
+    if (pageIsHttps && urlIsHttp) {
+        toastr.error(
+            `❌ 当前页面 HTTPS，但 ComfyUI 是 HTTP（${cleanUrl}）—— 浏览器会拦截 mixed content。要么把酒馆改成 HTTP 访问，要么给 ComfyUI 套 HTTPS 反代。`,
+            '', { timeOut: 10_000, extendedTimeOut: 5_000 },
+        );
+        return;
+    }
+
+    toastr.info(`测试 ComfyUI 连接：${cleanUrl}`);
     try {
-        const resp = await fetch(`${url.replace(/\/+$/, '')}/system_stats`);
+        const resp = await fetch(`${cleanUrl}/system_stats`);
         if (!resp.ok) {
-            toastr.error(`❌ ComfyUI 响应 ${resp.status}`);
+            toastr.error(`❌ ComfyUI 响应 ${resp.status}（${cleanUrl}）`);
             return;
         }
         const data = await resp.json();
         const ver = data?.system?.comfyui_version || data?.system?.python_version || 'unknown';
         toastr.success(`✅ ComfyUI 已连接 (${ver})`);
     } catch (err) {
-        toastr.error(`❌ 无法连接：${err.message || err}（确认 ComfyUI 启动时加 --enable-cors-header '*'）`);
+        // Network failure — most common causes: ComfyUI 没开 / 没加 CORS / 没加 --listen / IP 过期 / 防火墙
+        const hints = [
+            `1) ComfyUI 是否启动且监听该地址？(netstat -an | findstr :8188 看是否 0.0.0.0:8188)`,
+            `2) 启动参数是否含 --listen 0.0.0.0 --enable-cors-header *？`,
+            `3) 电脑当前 IP 是否就是 ${cleanUrl.match(/\/\/([^:/]+)/)?.[1] || '?'}？(ipconfig 确认；DHCP 重连后 IP 常会变)`,
+            `4) 电脑防火墙是否放行 8188 端口？`,
+            IS_TOUCH_DEVICE ? `5) 手机和电脑是否在同一 Wi-Fi/局域网/热点？` : null,
+        ].filter(Boolean).join('  ');
+        toastr.error(
+            `❌ 无法连接 ${cleanUrl}：${err.message || err}\n排查：${hints}`,
+            '', { timeOut: 15_000, extendedTimeOut: 8_000 },
+        );
     }
 }
 
@@ -1877,6 +1910,13 @@ function bindGlobalEventDelegation() {
     // v0.12.3: 旧逻辑"selectionMode + chat scope → toggle selection 而不开 lightbox"
     // 在手机上极易导致用户莫名进入 selection mode 后所有点击失效（toolbar 可能溢出屏幕看不到）。
     // 改成 tap 永远开图，长按管理选择。WeChat / Photos / Instagram 全部这套交互。
+    //
+    // v0.13.1: 取消"必须同时命中 .phone-img-cell + img.phone-pic"的双要求。
+    // 原写法在两类场景下挂掉：
+    //   - moments / forum / xhs 直接渲染 .phone-image-slot，没有 .phone-img-cell 包装 → 永远开不了图
+    //   - messages 虽有 cell 包装，但 .phone-image-slot 有 12px padding，点到图片周围
+    //     padding 时 e.target 是 slot 而非 img，closest('img.phone-pic') 拿不到 img（祖先链没有）
+    // 新逻辑：找 img 优先；找不到就从最近的 slot/cell 里反向 querySelector 摸一张已加载的图。
     phoneRoot.addEventListener('click', (e) => {
         // Long-press fired moments ago — eat the trailing click so we don't toggle the same cell off
         if (suppressNextClick) {
@@ -1887,10 +1927,16 @@ function bindGlobalEventDelegation() {
         }
         // Reroll button has its own handler in rerender (with stopPropagation); skip here.
         if (e.target.closest && e.target.closest('.phone-img-reroll-btn')) return;
-        const cell = e.target.closest && e.target.closest('.phone-img-cell');
-        const img = e.target.closest && e.target.closest('img.phone-pic');
-        if (!cell || !img) return;
-        if (img.src) openImageLightbox(img.src);
+        let img = e.target.closest && e.target.closest('img.phone-pic');
+        if (!img) {
+            const slot = e.target.closest && e.target.closest('.phone-image-slot');
+            if (slot) img = slot.querySelector('img.phone-pic');
+        }
+        if (!img) {
+            const cell = e.target.closest && e.target.closest('.phone-img-cell');
+            if (cell) img = cell.querySelector('img.phone-pic');
+        }
+        if (img && img.src) openImageLightbox(img.src);
     });
 
     // Selection toolbar controls
