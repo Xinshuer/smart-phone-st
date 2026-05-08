@@ -542,10 +542,17 @@ async function onMessageReceived() {
 
     // v0.12.3 Bug 3 修复：先剥 <think>/<thinking> 块（DeepSeek-R1/V3 推理模型常加），
     // 再 parse PHONE 块。否则 reasoning prose 漏出来会显示在 ST 气泡里。
-    if (msg.mes && /<think(?:ing)?>/i.test(msg.mes)) {
+    // v0.12.4 加多种推理 wrapper：```thinking / [思考开始] / [REASONING] 等
+    if (msg.mes) {
         let cleaned = msg.mes
+            // <think>...</think>, <thinking>...</thinking>
             .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
             .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
+            // ```thinking ... ```
+            .replace(/```(?:thinking|reasoning|thought)[\s\S]*?```/gi, '')
+            // 中文 [思考] / [推理] 块
+            .replace(/\[思考(?:开始|过程)?\][\s\S]*?\[\/?思考(?:结束)?\]/g, '')
+            .replace(/\[REASONING\][\s\S]*?\[\/REASONING\]/gi, '')
             .trim();
         if (cleaned !== msg.mes) {
             msg.mes = cleaned || '📱';
@@ -556,12 +563,18 @@ async function onMessageReceived() {
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
     if (!parsed) {
         // Bug 3 兜底：模型完全没输出 PHONE 块（只有 reasoning prose / 闲聊），
-        // 检测中文推理特征（"用户" + "我需要"/"首先"/"我们来看看"/"对话连贯性"等）→
-        // 替换为 📱 占位避免散文污染聊天，并不持久化（让用户能 regenerate）。
-        if (msg.mes && msg.mes.length > 200) {
-            const reasoningHints = ['我需要', '首先', '我们来看看', '让我', '用户的任务', '对话连贯性', '用户希望', '考虑到', '所以我'];
+        // 检测中文推理特征 → 替换为 📱 占位避免散文污染聊天，并不持久化（让用户能 regenerate）。
+        // v0.12.4 hints 扩展 + 阈值降到 1（只要含明显推理词就触发）。
+        if (msg.mes && msg.mes.length > 150) {
+            const reasoningHints = [
+                '好的，我', '好的我', '我需要', '首先', '我们来看看', '让我', '用户的任务',
+                '对话连贯性', '用户希望', '考虑到', '所以我', '处理这个用户', '处理用户',
+                '用户通过', '用户要求', '用户指定', '根据用户', '根据角色', '根据核心准则',
+                '我注意到', '具体输出时', '具体编写', '在编写时', '在具体输出', 'pic prompt 必须',
+                '严格遵守', '严格遵循', '在具体回复', '我应该让', '我需要让',
+            ];
             const hits = reasoningHints.filter(h => msg.mes.includes(h)).length;
-            if (hits >= 2) {
+            if (hits >= 1) {
                 msg.mes = '📱（AI 输出推理散文未生成 PHONE 块，请点 ↩ 重新生成）';
                 try { ctx.saveChatDebounced ? ctx.saveChatDebounced() : (ctx.saveChat && ctx.saveChat()); } catch {}
             }
