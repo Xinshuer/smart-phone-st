@@ -282,8 +282,13 @@ function makeFrameDraggable(handle, target) {
     let dragging = false, offX = 0, offY = 0;
 
     function isInteractive(el) {
-        return ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)
-            || !!el.closest('#smart-phone-screen');
+        return ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL'].includes(el.tagName)
+            || !!el.closest('#smart-phone-screen')
+            // v0.14.7 关键修复：modal 内的 touch 必须 OPT OUT 手机壳拖拽逻辑
+            // 之前 v0.14.4 把 modal 插入到 .smart-phone-frame（在 screen 外），
+            // 导致 modal 内 touchmove 被 makeFrameDraggable 的 preventDefault 抢占 →
+            // 内容 scroll 失效 + 整个手机壳被拖动。closest 检查 modal-bg 后修复。
+            || !!el.closest('.phone-modal-bg');
     }
     function startDrag(clientX, clientY, el) {
         if (isInteractive(el)) return false;
