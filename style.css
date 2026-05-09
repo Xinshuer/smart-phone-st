@@ -630,6 +630,65 @@ img.phone-pick-av { object-fit: cover; }
     cursor: pointer;
 }
 .phone-btn.phone-start-chat:hover { background: #1565c0; }
+
+/* v0.14.10 陌生人折叠区 */
+.phone-stranger-section {
+    margin-bottom: 8px;
+    border: 1px solid #ffe5b4;
+    border-radius: 6px;
+    background: #fff8e7;
+    overflow: hidden;
+}
+.phone-stranger-header {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #b8731d;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+.phone-stranger-header:hover { background: rgba(255, 207, 102, 0.2); }
+.phone-stranger-toggle-arrow { font-size: 10px; }
+.phone-stranger-body {
+    border-top: 1px solid #ffe5b4;
+}
+.phone-stranger-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #ffe5b4;
+    font-size: 12px;
+}
+.phone-stranger-row:last-child { border-bottom: none; }
+.phone-stranger-kind {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: #666;
+}
+.phone-stranger-name {
+    flex: 1;
+    min-width: 0;
+    color: #333;
+    font-weight: 500;
+}
+.phone-stranger-count {
+    color: #888;
+    font-size: 11px;
+}
+.phone-stranger-row .phone-btn {
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.phone-stranger-row .phone-btn:hover { background: #f0f0f0; }
 .bubble-edit-actions {
     display: flex; gap: 6px; justify-content: flex-end;
     margin-top: 6px;

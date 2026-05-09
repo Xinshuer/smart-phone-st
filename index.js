@@ -463,6 +463,27 @@ async function rerender() {
                 if (showAllChk) {
                     showAllChk.addEventListener('change', (e) => handleShowAllContactsToggle(e.target.checked));
                 }
+                // v0.14.10 陌生人折叠区交互
+                const stToggle = screen.querySelector('#phone-stranger-toggle');
+                if (stToggle) {
+                    stToggle.addEventListener('click', () => {
+                        const body = screen.querySelector('.phone-stranger-body');
+                        const arrow = stToggle.querySelector('.phone-stranger-toggle-arrow');
+                        const isCollapsed = body.style.display === 'none';
+                        body.style.display = isCollapsed ? 'block' : 'none';
+                        if (arrow) arrow.textContent = isCollapsed ? '▼' : '▶';
+                        sessionStorage.setItem('phone-stranger-section-collapsed', isCollapsed ? 'false' : 'true');
+                    });
+                }
+                screen.querySelectorAll('.phone-stranger-edit').forEach(b => {
+                    b.addEventListener('click', () => openStrangerEditModal(b.dataset.name));
+                });
+                screen.querySelectorAll('.phone-stranger-promote').forEach(b => {
+                    b.addEventListener('click', () => promoteStrangerHandler(b.dataset.name));
+                });
+                screen.querySelectorAll('.phone-stranger-delete').forEach(b => {
+                    b.addEventListener('click', () => deleteStrangerHandler(b.dataset.name));
+                });
             }
         } else {
             screen.querySelector('[data-back]')?.addEventListener('click', () => {
@@ -780,7 +801,8 @@ async function onMessageReceived() {
             try {
                 if (info.platform === '朋友圈') {
                     const post = State.findMomentsPost(chatId, info.postId);
-                    const contacts = State.load().contacts;
+                    // v0.14.10 fresh feed 排除 tempOrigin 联系人
+                    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
                     if (post) await generateMomentReplies(chatId, info.postId, post, contacts, ctx);
                 } else if (info.platform === '论坛') {
                     const post = State.findForumPost(chatId, info.postId);
@@ -988,7 +1010,8 @@ async function handleMomentsClear() {
 }
 
 async function handleMomentsRefresh() {
-    const contacts = State.load().contacts;
+    // v0.14.10 fresh feed 排除 tempOrigin: true 联系人 (升级自陌生人的临时 NPC 不主动发朋友圈)
+    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
     if (!contacts.length) { toastr.warning('请先在设置中导入联系人'); return; }
     toastr.info('生成朋友圈动态…');
     const ctx = getContext();
@@ -1022,7 +1045,8 @@ async function handleMomentsSubmit({ content, images = [] }) {
     State.appendMoments(chatId, [post]);
     momentsSetView('feed');
     rerender();
-    const contacts = State.load().contacts;
+    // v0.14.10 排除 tempOrigin 联系人
+    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
     if (contacts.length) {
         toastr.info('等待联系人评论…');
         setTimeout(async () => {
@@ -1046,7 +1070,8 @@ async function handleMomentsComment(postId, text) {
     const userName = ctx?.name1 || '我';
     State.appendMomentsComment(chatId, postId, [{ from: 'user', authorName: userName, content: text, time: Protocol.nowHHMM() }]);
     rerender();
-    const contacts = State.load().contacts;
+    // v0.14.10 排除 tempOrigin 联系人
+    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
     if (contacts.length) {
         setTimeout(async () => {
             const post = State.findMomentsPost(chatId, postId);
@@ -2717,6 +2742,82 @@ async function submitGroupPhotoCommand({ groupId, mode, targetMembers, scene }) 
     ta.value = `📱 <Request: ${safeOoc}>`;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     document.querySelector('#send_but')?.click();
+}
+
+// v0.14.10 陌生人 modal handlers
+function openStrangerEditModal(name) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const sa = State.getStrangerAnchor(chatId, name);
+    if (!sa) return;
+    const html = `<div class="phone-modal-bg" id="phone-stranger-edit-modal">
+        <div class="phone-modal">
+            <div class="phone-modal-hd">修改陌生角色：${escapeHtml(name)}</div>
+            <div class="phone-modal-body">
+                <div class="phone-form-row">
+                    <label class="phone-form-label">类别</label>
+                    <select id="phone-stranger-kind" class="phone-input">
+                        <option value="fictional_female"${sa.kind === 'fictional_female' ? ' selected' : ''}>🌸 女虚构</option>
+                        <option value="fictional_male"${sa.kind === 'fictional_male' ? ' selected' : ''}>⚠ 男虚构</option>
+                        <option value="real_origin_female"${sa.kind === 'real_origin_female' ? ' selected' : ''}>⭐ 现实有原型女</option>
+                    </select>
+                </div>
+                <div class="phone-form-row">
+                    <label class="phone-form-label">外貌锚点 booru tags</label>
+                    <textarea id="phone-stranger-core" class="phone-input" rows="4" style="width:100%;font-family:monospace;font-size:12px;">${escapeHtml(sa.core)}</textarea>
+                    <p class="phone-hint" style="font-size:11px;color:#888;margin-top:4px;">每次该角色出现时自动注入这组 tag 保持视觉一致</p>
+                </div>
+                <div class="phone-form-row">
+                    <label class="phone-form-label">出现次数 / 首次时间</label>
+                    <p style="margin:4px 0;font-size:12px;color:#666;">${sa.appearCount || 1} 次 · ${new Date(sa.firstSeen || 0).toLocaleString()}</p>
+                </div>
+            </div>
+            <div class="phone-modal-ft">
+                <button class="phone-btn" data-modal-cancel>取消</button>
+                <button class="phone-btn phone-btn-primary" id="phone-stranger-save">保存</button>
+            </div>
+        </div>
+    </div>`;
+    const existing = phoneRoot?.querySelector('#phone-stranger-edit-modal');
+    if (existing) existing.remove();
+    getModalContainer().insertAdjacentHTML('beforeend', html);
+    const modal = phoneRoot.querySelector('#phone-stranger-edit-modal');
+    if (!modal) return;
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('#phone-stranger-save')?.addEventListener('click', () => {
+        const newKind = modal.querySelector('#phone-stranger-kind')?.value || sa.kind;
+        const newCore = modal.querySelector('#phone-stranger-core')?.value.trim();
+        if (!newCore) { toastr.warning('外貌 tag 不能为空'); return; }
+        State.updateStrangerAnchor(chatId, name, { kind: newKind, core: newCore });
+        toastr.success('已更新');
+        close();
+        rerender();
+    });
+}
+
+function promoteStrangerHandler(name) {
+    if (!confirm(`将「${name}」升级为正式联系人？\n\n升级后联系人会自动加入当前激活的世界书，可点 ✨ 生成完整外貌锚点。\n注意：升级后的联系人 不会 主动出现在朋友圈/小红书/论坛 fresh feed 里（除非你主动 cue ta）。`)) return;
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const activeBooks = getActiveBookNames();
+    const ok = State.promoteStrangerToContact(chatId, name, activeBooks);
+    if (ok) {
+        toastr.success(`「${name}」已升级为联系人，可在联系人 tab 看到`);
+        rerender();
+    } else {
+        toastr.error('升级失败');
+    }
+}
+
+function deleteStrangerHandler(name) {
+    if (!confirm(`删除陌生角色「${name}」的外貌锚点？\n\n删除后下次该角色再出现时会重新抽取外貌（可能跟之前不一样）。`)) return;
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    State.removeStrangerAnchor(chatId, name);
+    toastr.success('已删除');
+    rerender();
 }
 
 function openGroupSettingsModal(groupId) {
