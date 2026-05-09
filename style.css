@@ -430,6 +430,20 @@ img.wc-av { object-fit: cover; }
     touch-action: pan-y;
     overscroll-behavior: contain;
 }
+
+/* v0.14.6 fix: Android WebView 关键陷阱 —— label/button/input 元素的默认
+ * touch-action: manipulation 会拦截 swipe 等待判定 click，触发 touchmove 不
+ * 冒泡到 scroll 容器 → 手指在 label 上 swipe 不识别为滚动。
+ * 显式给 modal 内所有交互元素 touch-action: pan-y 让垂直滚动手势穿透。
+ * 不影响 click 行为（pan-y 仅声明垂直 pan 允许，click 仍正常触发）。 */
+.phone-modal-body label,
+.phone-modal-body button,
+.phone-modal-body input,
+.phone-modal-body select,
+.phone-modal-body textarea,
+.phone-modal-body div {
+    touch-action: pan-y;
+}
 .phone-modal-ft {
     display: flex; gap: 8px; justify-content: flex-end;
     padding: 10px 14px;
