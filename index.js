@@ -375,14 +375,45 @@ async function rerender() {
         if (!currentThread) {
             if (currentMessagesSubTab === 'chats') {
                 screen.querySelectorAll('.phone-list-item').forEach((row) => {
+                    // 短按 = 进入会话
                     row.addEventListener('click', () => {
-                        // v0.14.0 群聊 row 用 dataset.threadId（grp_xxx），单聊 row 用 dataset.thread（联系人名）
+                        if (row._suppressClick) { row._suppressClick = false; return; }
                         currentThread = row.dataset.threadType === 'group'
                             ? row.dataset.threadId
                             : row.dataset.thread;
                         if (selectionMode) exitSelectionMode();
                         pendingPostCommand = null;
                         rerender();
+                    });
+                    // v0.14.2 长按/右键 = 删除该聊天（微信式）
+                    const triggerDelete = () => {
+                        const isGroup = row.dataset.threadType === 'group';
+                        const threadId = isGroup ? row.dataset.threadId : row.dataset.thread;
+                        showChatDeleteMenu(threadId, isGroup, row);
+                    };
+                    row.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        triggerDelete();
+                    });
+                    let lpTimer = null;
+                    let lpStart = null;
+                    row.addEventListener('touchstart', (e) => {
+                        lpStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                        if (lpTimer) clearTimeout(lpTimer);
+                        lpTimer = setTimeout(() => {
+                            row._suppressClick = true; // 长按触发后禁用本次 click
+                            try { navigator.vibrate && navigator.vibrate(50); } catch {}
+                            triggerDelete();
+                        }, 600);
+                    }, { passive: true });
+                    row.addEventListener('touchmove', (e) => {
+                        if (!lpTimer || !lpStart) return;
+                        const dx = Math.abs(e.touches[0].clientX - lpStart.x);
+                        const dy = Math.abs(e.touches[0].clientY - lpStart.y);
+                        if (dx > 10 || dy > 10) { clearTimeout(lpTimer); lpTimer = null; }
+                    }, { passive: true });
+                    row.addEventListener('touchend', () => {
+                        if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
                     });
                 });
                 // v0.14.0 创建群聊按钮（聊天列表顶部 + 空状态）
@@ -407,11 +438,14 @@ async function rerender() {
                 screen.querySelectorAll('.phone-gen-appearance').forEach((btn) => {
                     btn.addEventListener('click', () => handleGenerateAppearance(btn.dataset.name, btn));
                 });
-                // v0.14.1 联系人 tab 「💬 开始聊天」按钮 → 直接进入空会话
+                // v0.14.1 / v0.14.2 联系人 tab 「💬 开始聊天」 → 加进 activeChats + 进入会话
                 screen.querySelectorAll('.phone-start-chat').forEach((btn) => {
                     btn.addEventListener('click', () => {
                         const name = btn.dataset.name;
                         if (!name) return;
+                        const ctx = getContext();
+                        const chatId = ctx.chatId || 'default';
+                        State.activateChatThread(chatId, name);
                         currentThread = name;
                         currentMessagesSubTab = 'chats';
                         if (selectionMode) exitSelectionMode();
@@ -883,6 +917,8 @@ async function handleSendSMS(text) {
     }
 
     // 单聊原逻辑
+    // v0.14.2 兜底：发消息时自动激活该 thread（保险，避免某些路径漏激活）
+    State.activateChatThread(chatId, currentThread);
     State.appendMessages(chatId, [{
         from: currentThread,
         type: 'text',
@@ -2435,6 +2471,56 @@ window.smartPhone = {
 // ─────────────────────────────────────────────────────────────────────────
 // v0.14.0 群聊 modal handlers
 // ─────────────────────────────────────────────────────────────────────────
+
+// v0.14.2 长按/右键聊天列表项 → 弹删除该聊天菜单
+function showChatDeleteMenu(threadId, isGroup, anchorEl) {
+    if (!phoneRoot) return;
+    const existing = phoneRoot.querySelector('#phone-chat-delete-menu');
+    if (existing) existing.remove();
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+
+    let label;
+    if (isGroup) {
+        const g = State.findGroup(threadId);
+        if (!g) return;
+        label = `「${g.name}」`;
+    } else {
+        label = `「${threadId}」`;
+    }
+
+    const html = `<div class="phone-modal-bg" id="phone-chat-delete-menu">
+        <div class="phone-modal" style="max-width:320px;">
+            <div class="phone-modal-hd">删除聊天</div>
+            <div class="phone-modal-body">
+                <p style="margin:8px 0;font-size:14px;color:#333;">确定删除聊天 ${escapeHtml(label)}？</p>
+                <p style="margin:0;font-size:12px;color:#888;">${isGroup ? '群聊将进入软删除（30 天可恢复）' : '聊天记录会清空，联系人本身保留（仍可重新开启聊天）'}</p>
+            </div>
+            <div class="phone-modal-ft">
+                <button class="phone-btn" data-modal-cancel>取消</button>
+                <button class="phone-btn phone-btn-warn" id="phone-chat-delete-confirm">删除</button>
+            </div>
+        </div>
+    </div>`;
+    phoneRoot.insertAdjacentHTML('beforeend', html);
+    const modal = phoneRoot.querySelector('#phone-chat-delete-menu');
+    if (!modal) return;
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('#phone-chat-delete-confirm')?.addEventListener('click', () => {
+        if (isGroup) {
+            State.softDeleteGroup(threadId);
+            toastr.success('群聊已删除（30 天可恢复）');
+        } else {
+            State.deactivateChatThread(chatId, threadId);
+            toastr.success('聊天已删除');
+        }
+        close();
+        if (currentThread === threadId) currentThread = null;
+        rerender();
+    });
+}
 
 function openCreateGroupModal() {
     const existing = phoneRoot?.querySelector('#phone-create-group-modal');
