@@ -407,6 +407,18 @@ async function rerender() {
                 screen.querySelectorAll('.phone-gen-appearance').forEach((btn) => {
                     btn.addEventListener('click', () => handleGenerateAppearance(btn.dataset.name, btn));
                 });
+                // v0.14.1 联系人 tab 「💬 开始聊天」按钮 → 直接进入空会话
+                screen.querySelectorAll('.phone-start-chat').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const name = btn.dataset.name;
+                        if (!name) return;
+                        currentThread = name;
+                        currentMessagesSubTab = 'chats';
+                        if (selectionMode) exitSelectionMode();
+                        pendingPostCommand = null;
+                        rerender();
+                    });
+                });
             }
         } else {
             screen.querySelector('[data-back]')?.addEventListener('click', () => {

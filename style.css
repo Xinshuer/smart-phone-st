@@ -511,15 +511,61 @@ img.phone-pick-av { object-fit: cover; }
 }
 .phone-group-settings-row:last-child { border-bottom: none; }
 
-/* 创建群聊按钮 */
-.phone-create-group-btn {
-    width: 100%; padding: 8px;
+/* v0.14.1 聊天列表顶栏：右对齐小巧"创建群聊"按钮（不抢镜） */
+.phone-list-topbar {
+    display: flex; justify-content: flex-end;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fafafa;
+}
+.phone-create-group-icon-btn {
     background: #07c160; color: #fff;
-    border: none; border-radius: 6px;
-    font-size: 13px; font-weight: 600;
+    border: none; border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 12px; font-weight: 600;
     cursor: pointer;
+    line-height: 1.4;
+}
+.phone-create-group-icon-btn:hover { background: #06ad56; }
+
+/* 老版"占满整行的大绿按钮"在空状态下保留小尺寸 */
+.phone-create-group-btn {
+    padding: 6px 14px;
+    background: #07c160; color: #fff;
+    border: none; border-radius: 14px;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    margin-top: 12px;
 }
 .phone-create-group-btn:hover { background: #06ad56; }
+
+/* 渐变首字头像（联系人无参考图时） */
+.phone-avatar-gradient {
+    color: #fff !important;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* 列表底部"还有 N 个联系人没聊过"提示 */
+.phone-list-more-hint {
+    padding: 14px 16px;
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+    background: #fafafa;
+    border-top: 1px dashed #ddd;
+    margin-top: 8px;
+}
+
+/* 联系人 tab 💬 开始聊天按钮 */
+.phone-btn.phone-start-chat {
+    padding: 4px 10px;
+    background: #1976d2; color: #fff;
+    border: none; border-radius: 12px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.phone-btn.phone-start-chat:hover { background: #1565c0; }
 .bubble-edit-actions {
     display: flex; gap: 6px; justify-content: flex-end;
     margin-top: 6px;
