@@ -1867,10 +1867,20 @@ function openImageLightbox(src) {
     if (document.getElementById('sp-lightbox')) return;
     const overlay = document.createElement('div');
     overlay.id = 'sp-lightbox';
+    // v0.14.8 fix（Android 单击放大不生效）：
+    // ST 移动端给 <html> 加了 transform → <html> 成为 fixed 后代的 containing block，
+    // 而 <html> 高度被坍塌成 0（同 fixMobileShellPos 处的注释）→ width/height: 100% 的
+    // fixed overlay 会被解释成 0×0 完全看不见，看起来"点了没反应"。
+    // 解法照搬 fixMobileShellPos：用 visualViewport 像素值显式撑开。
+    const setOverlaySize = () => {
+        const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+        const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        overlay.style.setProperty('width',  vw + 'px', 'important');
+        overlay.style.setProperty('height', vh + 'px', 'important');
+    };
     overlay.setAttribute('style', [
         'position: fixed !important',
         'top: 0 !important', 'left: 0 !important',
-        'width: 100% !important', 'height: 100% !important',
         'background: rgba(0,0,0,0.92) !important',
         'z-index: 2147483645 !important',
         'display: flex !important',
@@ -1879,11 +1889,20 @@ function openImageLightbox(src) {
         'cursor: zoom-out !important',
         'touch-action: pinch-zoom !important',
     ].join('; '));
+    setOverlaySize();
     const img = document.createElement('img');
     img.src = src;
     img.setAttribute('style', 'max-width:100%;max-height:100%;object-fit:contain;touch-action:pinch-zoom');
     overlay.appendChild(img);
-    overlay.addEventListener('click', () => overlay.remove());
+    // 旋转 / 地址栏收起 / 软键盘弹出都会改 viewport，跟随更新尺寸
+    const onResize = () => setOverlaySize();
+    window.visualViewport?.addEventListener('resize', onResize);
+    window.addEventListener('resize', onResize);
+    overlay.addEventListener('click', () => {
+        window.visualViewport?.removeEventListener('resize', onResize);
+        window.removeEventListener('resize', onResize);
+        overlay.remove();
+    });
     (document.documentElement || document.body).appendChild(overlay);
 }
 
