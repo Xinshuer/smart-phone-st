@@ -546,6 +546,46 @@ img.phone-pick-av { object-fit: cover; }
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
+/* v0.14.3 overlay 头像：底层渐变首字 + img 覆盖在上层
+ * onerror 仅 this.remove()，加载失败自然露出底层（不破坏外层 HTML attr） */
+.phone-avatar-with-img {
+    position: relative;
+    overflow: hidden;
+}
+.phone-avatar-ref-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+/* 群聊气泡 NPC 头像同 overlay 模式 */
+.wc-av-with-img {
+    position: relative;
+    overflow: hidden;
+}
+.wc-av-with-img > span {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 600;
+}
+.wc-av-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
 /* 列表底部"还有 N 个联系人没聊过"提示 */
 .phone-list-more-hint {
     padding: 14px 16px;
