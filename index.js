@@ -621,7 +621,9 @@ function onPromptReady(eventData) {
         }
     }
 
-    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup });
+    // v0.14.8 传当前 SD 模型 → protocol 按 model 给陌生角色不同 pic prompt 建议
+    const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
+    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel });
     eventData.chat.push({ role: 'system', content: styleRule });
 }
 
@@ -2495,6 +2497,12 @@ window.smartPhone = {
     findContactById: (id) => State.findContactById(id),
     findGroup: (id) => State.findGroup(id),
     resolveGroupMembers: (group) => State.resolveGroupMembers(group),
+    // v0.14.8 陌生人锚点 API（smart-image-gen 调用，chat-scoped）
+    getStrangerAnchor: (chatId, name) => State.getStrangerAnchor(chatId, name),
+    saveStrangerAnchor: (chatId, name, data) => State.saveStrangerAnchor(chatId, name, data),
+    incrementStrangerAppearCount: (chatId, name) => State.incrementStrangerAppearCount(chatId, name),
+    listStrangerAnchors: (chatId) => State.listStrangerAnchors(chatId),
+    removeStrangerAnchor: (chatId, name) => State.removeStrangerAnchor(chatId, name),
 };
 
 // ─────────────────────────────────────────────────────────────────────────
