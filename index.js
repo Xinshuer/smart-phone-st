@@ -453,6 +453,11 @@ async function rerender() {
                         rerender();
                     });
                 });
+                // v0.14.5 「显示所有世界书联系人」开关
+                const showAllChk = screen.querySelector('#phone-contacts-show-all');
+                if (showAllChk) {
+                    showAllChk.addEventListener('change', (e) => handleShowAllContactsToggle(e.target.checked));
+                }
             }
         } else {
             screen.querySelector('[data-back]')?.addEventListener('click', () => {
