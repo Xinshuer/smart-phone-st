@@ -681,6 +681,8 @@ async function onMessageReceived() {
         // Bug 3 兜底：模型完全没输出 PHONE 块（只有 reasoning prose / 闲聊），
         // 检测中文推理特征 → 替换为 📱 占位避免散文污染聊天，并不持久化（让用户能 regenerate）。
         // v0.12.4 hints 扩展 + 阈值降到 1（只要含明显推理词就触发）。
+        // v0.14.12 关键修复：之前只改 msg.mes 没调 updateMessageBlock → ST 气泡 DOM 不刷新
+        //         导致用户仍看到思维链。补上 updateBlock + saveChat 让 UI 立即更新。
         if (msg.mes && msg.mes.length > 150) {
             const reasoningHints = [
                 '好的，我', '好的我', '我需要', '首先', '我们来看看', '让我', '用户的任务',
@@ -688,11 +690,20 @@ async function onMessageReceived() {
                 '用户通过', '用户要求', '用户指定', '根据用户', '根据角色', '根据核心准则',
                 '我注意到', '具体输出时', '具体编写', '在编写时', '在具体输出', 'pic prompt 必须',
                 '严格遵守', '严格遵循', '在具体回复', '我应该让', '我需要让',
+                // v0.14.12 补常见 hits（用户实测漏的）
+                '现在用户', '现在我', '让我们', '让我们设计', '让我们看', '让我看', '让我先',
+                '现在规划', '所以应该', '所以可以', '所以我应该', '我会', '我可以', '注意，',
+                '需要避免', '需要注意', '可能问题', '应该输出', '只需要输出', '只需输出',
+                '基于这个', '基于以上', '根据上下文', '根据这个', '根据要求',
             ];
             const hits = reasoningHints.filter(h => msg.mes.includes(h)).length;
             if (hits >= 1) {
                 msg.mes = '📱（AI 输出推理散文未生成 PHONE 块，请点 ↩ 重新生成）';
-                try { ctx.saveChatDebounced ? ctx.saveChatDebounced() : (ctx.saveChat && ctx.saveChat()); } catch {}
+                try {
+                    const updateBlock = (await import('../../../../script.js')).updateMessageBlock;
+                    if (typeof updateBlock === 'function') updateBlock(idx, msg);
+                } catch {}
+                try { await ctx.saveChat(); } catch {}
             }
         }
         return;
