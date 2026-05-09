@@ -645,7 +645,17 @@ function onPromptReady(eventData) {
     // v0.14.8 传当前 SD 模型 → protocol 按 model 给陌生角色不同 pic prompt 建议
     const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
     const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel });
-    eventData.chat.push({ role: 'system', content: styleRule });
+
+    // v0.14.13 关键修复：协议注入位置改 chat 开头附近（角色卡之后、历史聊天之前）。
+    // 之前 push 到末尾 → AI 看到 prompt 最后是手机协议（user 预设的"正式开始本次任务"也在末尾）
+    // → AI 误判协议是最新指令、忽略真正的用户消息。
+    // splice(1, 0, ...) 插到角色卡 description 之后，让用户消息保持在最末，
+    // AI 自然把最后的用户消息当成最新指令。
+    if (Array.isArray(eventData.chat) && eventData.chat.length >= 1) {
+        eventData.chat.splice(1, 0, { role: 'system', content: styleRule });
+    } else {
+        eventData.chat.unshift({ role: 'system', content: styleRule });
+    }
 }
 
 async function onMessageReceived() {
