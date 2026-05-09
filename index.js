@@ -2472,6 +2472,11 @@ window.smartPhone = {
 // v0.14.0 群聊 modal handlers
 // ─────────────────────────────────────────────────────────────────────────
 
+// v0.14.4 modal 插入容器：限制在 .smart-phone-frame 里，配合 CSS position:absolute 不超出手机壳
+function getModalContainer() {
+    return phoneRoot?.querySelector('.smart-phone-frame') || phoneRoot;
+}
+
 // v0.14.2 长按/右键聊天列表项 → 弹删除该聊天菜单
 function showChatDeleteMenu(threadId, isGroup, anchorEl) {
     if (!phoneRoot) return;
@@ -2502,7 +2507,7 @@ function showChatDeleteMenu(threadId, isGroup, anchorEl) {
             </div>
         </div>
     </div>`;
-    phoneRoot.insertAdjacentHTML('beforeend', html);
+    getModalContainer().insertAdjacentHTML('beforeend', html);
     const modal = phoneRoot.querySelector('#phone-chat-delete-menu');
     if (!modal) return;
     const close = () => modal.remove();
@@ -2526,7 +2531,7 @@ function openCreateGroupModal() {
     const existing = phoneRoot?.querySelector('#phone-create-group-modal');
     if (existing) existing.remove();
     if (!phoneRoot) return;
-    phoneRoot.insertAdjacentHTML('beforeend', renderCreateGroupModal());
+    getModalContainer().insertAdjacentHTML('beforeend', renderCreateGroupModal());
     const modal = phoneRoot.querySelector('#phone-create-group-modal');
     if (!modal) return;
     const close = () => modal.remove();
@@ -2569,7 +2574,7 @@ function openGroupPhotoModeModal(groupId) {
     const existing = phoneRoot?.querySelector('#phone-group-photo-modal');
     if (existing) existing.remove();
     if (!phoneRoot) return;
-    phoneRoot.insertAdjacentHTML('beforeend', renderGroupPhotoModeModal(groupId));
+    getModalContainer().insertAdjacentHTML('beforeend', renderGroupPhotoModeModal(groupId));
     const modal = phoneRoot.querySelector('#phone-group-photo-modal');
     if (!modal) return;
     const close = () => modal.remove();
@@ -2589,7 +2594,7 @@ function openGroupPhotoMemberPick(groupId, mode) {
     const existing = phoneRoot?.querySelector('#phone-group-photo-pick-modal');
     if (existing) existing.remove();
     if (!phoneRoot) return;
-    phoneRoot.insertAdjacentHTML('beforeend', renderGroupPhotoMemberPickModal({ groupId, mode }));
+    getModalContainer().insertAdjacentHTML('beforeend', renderGroupPhotoMemberPickModal({ groupId, mode }));
     const modal = phoneRoot.querySelector('#phone-group-photo-pick-modal');
     if (!modal) return;
     const close = () => modal.remove();
@@ -2711,7 +2716,7 @@ function openGroupSettingsModal(groupId) {
     </div>`;
     const existing = phoneRoot?.querySelector('#phone-group-settings-modal');
     if (existing) existing.remove();
-    phoneRoot.insertAdjacentHTML('beforeend', html);
+    getModalContainer().insertAdjacentHTML('beforeend', html);
     const modal = phoneRoot.querySelector('#phone-group-settings-modal');
     const close = () => modal.remove();
     modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));

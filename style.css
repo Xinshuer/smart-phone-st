@@ -398,20 +398,24 @@ img.wc-av { object-fit: cover; }
     filter: grayscale(0.7);
 }
 
-/* 创建群聊 / 群聊生图 modal 通用 */
+/* 创建群聊 / 群聊生图 modal 通用
+ * v0.14.4 fix: 用 absolute 限制在 .smart-phone-frame 内（已 position:relative），
+ * 而非 fixed 填满 viewport（手机壳是浮动小窗，fixed 会超出壳边） */
 .phone-modal-bg {
-    position: fixed; inset: 0;
+    position: absolute; inset: 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 2147483640;
+    z-index: 1000; /* 不能用 viewport 级 z-index，相对手机壳即可 */
     display: flex; align-items: center; justify-content: center;
     padding: 12px;
+    box-sizing: border-box;
 }
 .phone-modal {
     background: #fff;
     border-radius: 12px;
-    max-width: 420px; width: 100%; max-height: 90vh;
+    max-width: 100%; width: 100%; max-height: 100%;
     display: flex; flex-direction: column;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
 }
 .phone-modal-hd {
     padding: 14px 18px;
