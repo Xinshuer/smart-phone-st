@@ -21,7 +21,7 @@ import * as WB from './lib/worldbook.js';
 import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api.js';
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
-import { renderMessageList, renderThread, renderMessagesSubTabs, renderContactsTab } from './lib/apps/messages.js';
+import { renderMessageList, renderThread, renderMessagesSubTabs, renderContactsTab, renderGroupThread, renderCreateGroupModal, renderGroupPhotoModeModal, renderGroupPhotoMemberPickModal, isGroupThread } from './lib/apps/messages.js';
 import { renderForum, bindForumHandlers, setForumView as forumSetView, getForumDetailId, BOARDS as FORUM_BOARDS } from './lib/apps/forum.js';
 import { renderMoments, bindMomentsHandlers, setMomentsView as momentsSetView } from './lib/apps/moments.js';
 import { generateContactMoments, generateMomentReplies } from './lib/moments-api.js';
@@ -340,7 +340,10 @@ async function rerender() {
     switch (currentApp) {
         case 'messages':
             if (currentThread) {
-                html = renderThread(chatId, currentThread);
+                // v0.14.0 群聊 thread 走 renderGroupThread，单聊 thread 走 renderThread
+                html = isGroupThread(currentThread)
+                    ? renderGroupThread(chatId, currentThread)
+                    : renderThread(chatId, currentThread);
             } else {
                 const subTabHdr = renderMessagesSubTabs(currentMessagesSubTab);
                 html = subTabHdr + (currentMessagesSubTab === 'contacts'
@@ -373,12 +376,18 @@ async function rerender() {
             if (currentMessagesSubTab === 'chats') {
                 screen.querySelectorAll('.phone-list-item').forEach((row) => {
                     row.addEventListener('click', () => {
-                        currentThread = row.dataset.thread;
-                        if (selectionMode) exitSelectionMode(); // entering new thread clears stale selection
-                        pendingPostCommand = null; // commands are scoped to a chat thread
+                        // v0.14.0 群聊 row 用 dataset.threadId（grp_xxx），单聊 row 用 dataset.thread（联系人名）
+                        currentThread = row.dataset.threadType === 'group'
+                            ? row.dataset.threadId
+                            : row.dataset.thread;
+                        if (selectionMode) exitSelectionMode();
+                        pendingPostCommand = null;
                         rerender();
                     });
                 });
+                // v0.14.0 创建群聊按钮（聊天列表顶部 + 空状态）
+                screen.querySelector('#phone-create-group-btn')?.addEventListener('click', openCreateGroupModal);
+                screen.querySelector('#phone-create-group-empty')?.addEventListener('click', openCreateGroupModal);
             } else {
                 // Contacts sub-tab handlers (same handlers as settings contacts section)
                 screen.querySelectorAll('.phone-gen-ref').forEach((btn) => {
@@ -415,6 +424,16 @@ async function rerender() {
             // 📤 命令角色发帖 (Phase D)
             screen.querySelector('#phone-cmd-post-btn')?.addEventListener('click', () => {
                 if (currentThread) openCommandPostModal(currentThread);
+            });
+            // v0.14.0 📷 群聊生图按钮
+            screen.querySelector('#phone-group-photo-btn')?.addEventListener('click', (e) => {
+                const gid = e.currentTarget.dataset.groupId;
+                if (gid) openGroupPhotoModeModal(gid);
+            });
+            // v0.14.0 ⚙ 群设置按钮
+            screen.querySelector('#phone-group-settings-btn')?.addEventListener('click', (e) => {
+                const gid = e.currentTarget.dataset.groupId;
+                if (gid) openGroupSettingsModal(gid);
             });
             const input = screen.querySelector('#phone-input');
             const sendBtn = screen.querySelector('#phone-send-btn');
@@ -528,7 +547,25 @@ function onPromptReady(eventData) {
     if (!s.enabled) return;
     const contacts = s.contacts.map((c) => ({ name: c.name, note: c.note }));
     const lore = (s.worldbook?.importedEntries || []).filter((e) => e.type === 'lore' && e.enabled);
-    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore });
+
+    // v0.14.0 当前 thread 是群聊时，主动注入所有群成员的核心人设
+    // 绕过 ST 默认关键词触发机制，让 AI 看见每个成员的口癖/性格/称呼
+    let activeGroup = null;
+    if (currentThread && isGroupThread(currentThread)) {
+        const group = State.findGroup(currentThread);
+        if (group) {
+            const members = State.resolveGroupMembers(group)
+                .filter(m => !m.isDeleted && m.contact)
+                .map(m => ({
+                    name: m.nameSnapshot,
+                    // 抽 contact.rawContent 前 1500 字符作为核心人设档案
+                    profile: (m.contact.rawContent || m.contact.note || '').slice(0, 1500),
+                }));
+            activeGroup = { name: group.name, members };
+        }
+    }
+
+    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup });
     eventData.chat.push({ role: 'system', content: styleRule });
 }
 
@@ -634,16 +671,49 @@ async function onMessageReceived() {
     if (parsed.hongbao?.length) State.appendMessages(chatId, parsed.hongbao);
     if (parsed.voice?.length) State.appendMessages(chatId, parsed.voice);
     if (parsed.group?.length) {
-        // group msgs also go into a per-group thread keyed by group name
-        const grouped = parsed.group.map((g) => ({
-            from: g.group || g.from,
-            type: 'text',
-            content: `${g.from}: ${g.content}`,
-            time: g.time,
-            me: false,
-            pic: g.pic,
-        }));
-        State.appendMessages(chatId, grouped);
+        // v0.14.0 GMSG 路由：按 group name 模糊匹配现有 active group 的 id，写入 cs.groupThreads
+        const allGroups = State.getActiveGroups();
+        // 按 group name 分组（同一回合可能跨多个群，但通常 1 个）
+        const byGroup = new Map();
+        for (const g of parsed.group) {
+            // 优先按当前打开的群 ID 路由（user 在群聊里发消息触发的 GMSG 都归到该群）
+            let targetGroup = null;
+            if (currentThread && isGroupThread(currentThread)) {
+                targetGroup = State.findGroup(currentThread);
+            }
+            // fallback：按 GMSG.GROUP 属性精确/模糊匹配 active 群名
+            if (!targetGroup && g.group) {
+                targetGroup = allGroups.find(x => x.name === g.group)
+                    || allGroups.find(x => x.name && (x.name.includes(g.group) || g.group.includes(x.name)));
+            }
+            if (!targetGroup) {
+                console.warn('[smart-phone] GMSG 找不到对应群，丢弃:', g);
+                continue;
+            }
+            // FROM 匹配：必须是该群成员（按 nameSnapshot 兜底匹配）
+            const memberNames = (targetGroup.members || []).map(m => m.nameSnapshot);
+            const isValidFrom = memberNames.includes(g.from)
+                || memberNames.some(n => n.includes(g.from) || g.from.includes(n));
+            if (!isValidFrom) {
+                console.warn(`[smart-phone] GMSG FROM "${g.from}" 不在群 "${targetGroup.name}" 成员列表，丢弃`);
+                continue;
+            }
+            const arr = byGroup.get(targetGroup.id) || [];
+            arr.push({
+                from: g.from,
+                type: 'text',
+                content: g.content,
+                time: g.time,
+                me: false,
+                pic: g.pic,
+                subjects: g.subjects, // 多角色合影时下游用
+            });
+            byGroup.set(targetGroup.id, arr);
+        }
+        // 批量写入各群
+        for (const [gid, msgs] of byGroup) {
+            State.appendGroupMessages(chatId, gid, msgs);
+        }
     }
 
     // After-dispatch: auto-trigger "吃瓜 NPC" / contacts comments for commanded posts (Phase D #7)
@@ -770,7 +840,37 @@ async function handleSendSMS(text) {
     const chatId = ctx.chatId || 'default';
     const time = Protocol.nowHHMM();
 
-    // 1. Push user's bubble into phone state immediately
+    // v0.14.0 群聊分支
+    if (isGroupThread(currentThread)) {
+        const group = State.findGroup(currentThread);
+        if (!group) { toastr.error('群聊不存在'); return; }
+        const members = State.resolveGroupMembers(group);
+        const memberNames = members.map(m => m.nameSnapshot);
+
+        // 1. push 用户消息到 groupThreads
+        State.appendGroupMessages(chatId, currentThread, [{
+            from: ctx.name1 || '我',
+            type: 'text', content: text, time, me: true,
+        }]);
+
+        const input = phoneRoot?.querySelector('#phone-input');
+        if (input) input.value = '';
+        rerender();
+
+        const ta = document.querySelector('#send_textarea');
+        if (!ta) { toastr.error('找不到酒馆输入框'); return; }
+        const ooc = Protocol.buildSendOOC({
+            targetName: currentThread, time, userText: text,
+            isGroup: true, groupName: group.name, memberNames,
+        });
+        const safeOoc = Protocol.makeRequestSafe(ooc);
+        ta.value = `📱 <Request: ${safeOoc}>`;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('#send_but')?.click();
+        return;
+    }
+
+    // 单聊原逻辑
     State.appendMessages(chatId, [{
         from: currentThread,
         type: 'text',
@@ -779,24 +879,15 @@ async function handleSendSMS(text) {
         me: true,
     }]);
 
-    // 2. Clear input + re-render
     const input = phoneRoot?.querySelector('#phone-input');
     if (input) input.value = '';
     rerender();
 
-    // 3. Build OOC + post into ST's main textarea.
-    // Visible bubble is tiny (📱) so chat stays clean. Real content goes to AI via
-    // the embedded SMS in the OOC instruction.
     const ta = document.querySelector('#send_textarea');
-    if (!ta) {
-        toastr.error('找不到酒馆输入框，无法发送');
-        return;
-    }
+    if (!ta) { toastr.error('找不到酒馆输入框'); return; }
     const ooc = Protocol.buildSendOOC({ targetName: currentThread, time, userText: text, isGroup: false });
     const safeOoc = Protocol.makeRequestSafe(ooc);
-    const wrapped = `📱 <Request: ${safeOoc}>`;
-
-    ta.value = wrapped;
+    ta.value = `📱 <Request: ${safeOoc}>`;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     document.querySelector('#send_but')?.click();
 }
@@ -2225,16 +2316,32 @@ function triggerPicSlots(screen) {
     slots.forEach(async (slot) => {
         slot.setAttribute('data-loaded', '1');
         const picTag = slot.dataset.pic;
-        // data-hint: post author name (social handle or contact name)
-        // data-context: post title+body — resolveContact scans it for known contact names
         const hintName = slot.dataset.hint;
         const hintContext = slot.dataset.context || '';
         const hintSource = slot.dataset.source || '';
+        // v0.14.0 多角色合影：dataset.subjects = "张三,李四,王五" 触发 generateGroupPicTag 路径
+        const subjectsRaw = slot.dataset.subjects || '';
+        const subjects = subjectsRaw ? subjectsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
         const isReroll = slot.dataset.reroll === '1';
         if (isReroll) slot.removeAttribute('data-reroll');
+
+        // v0.14.0 fallback 修复：群聊时 currentThread 是 grp_xxx，不能用作 hint.from
+        // 改为扫 picTag/context 找已知群成员名
+        let fallbackFrom = null;
+        if (!hintName && currentThread) {
+            if (isGroupThread(currentThread)) {
+                const group = State.findGroup(currentThread);
+                if (group) {
+                    const memberNames = (group.members || []).map(m => m.nameSnapshot);
+                    fallbackFrom = memberNames.find(n => picTag.includes(n) || hintContext.includes(n));
+                }
+            } else {
+                fallbackFrom = currentThread; // 单聊 fallback 不变
+            }
+        }
         const hint = hintName
             ? { from: hintName, context: hintContext, source: hintSource, reroll: isReroll }
-            : (currentThread ? { from: currentThread, context: hintContext, source: hintSource, reroll: isReroll } : { context: hintContext, source: hintSource, reroll: isReroll });
+            : (fallbackFrom ? { from: fallbackFrom, context: hintContext, source: hintSource, reroll: isReroll } : { context: hintContext, source: hintSource, reroll: isReroll });
 
         const cached = picUrlCache.get(picTag);
 
@@ -2255,12 +2362,20 @@ function triggerPicSlots(screen) {
             return;
         }
 
-        // Not cached — start generation and store the Promise immediately to block duplicates
-        const promise = window.smartImageGen.generateFromPicTag(picTag, {
-            contacts: State.load().contacts,
-            hint,
-        }).then((url) => { picUrlCache.set(picTag, url); return url; })
-          .catch((err) => { picUrlCache.delete(picTag); throw err; });
+        // v0.14.0 多角色合影路径：subjects.length > 1 走 generateGroupPicTag
+        const useGroupPic = subjects.length > 1 && window.smartImageGen?.generateGroupPicTag;
+        const generator = useGroupPic
+            ? () => window.smartImageGen.generateGroupPicTag(picTag, {
+                contacts: State.load().contacts,
+                subjects, hint,
+            })
+            : () => window.smartImageGen.generateFromPicTag(picTag, {
+                contacts: State.load().contacts,
+                hint,
+            });
+        const promise = generator()
+            .then((url) => { picUrlCache.set(picTag, url); return url; })
+            .catch((err) => { picUrlCache.delete(picTag); throw err; });
         picUrlCache.set(picTag, promise);
 
         try {
@@ -2299,4 +2414,225 @@ window.smartPhone = {
     getCurrentModel: () => State.load().imageGen.currentModel,
     getComfyuiUrl: () => getActiveComfyuiUrl(),
     getWorkflowPath: (model) => State.load().imageGen.workflowPaths[model],
+    // v0.14.0 暴露给 smart-image-gen 调群成员 anchor
+    findContactById: (id) => State.findContactById(id),
+    findGroup: (id) => State.findGroup(id),
+    resolveGroupMembers: (group) => State.resolveGroupMembers(group),
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.14.0 群聊 modal handlers
+// ─────────────────────────────────────────────────────────────────────────
+
+function openCreateGroupModal() {
+    const existing = phoneRoot?.querySelector('#phone-create-group-modal');
+    if (existing) existing.remove();
+    if (!phoneRoot) return;
+    phoneRoot.insertAdjacentHTML('beforeend', renderCreateGroupModal());
+    const modal = phoneRoot.querySelector('#phone-create-group-modal');
+    if (!modal) return;
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    const nameInput = modal.querySelector('#phone-create-group-name');
+    const memberList = modal.querySelector('#phone-create-group-members');
+    const confirmBtn = modal.querySelector('#phone-create-group-confirm');
+    if (!confirmBtn) return; // 联系人 < 2 时无 confirm 按钮
+
+    const updateConfirm = () => {
+        const checked = modal.querySelectorAll('.phone-member-checkbox:checked');
+        const name = nameInput?.value.trim() || '';
+        confirmBtn.textContent = `创建 (${checked.length})`;
+        confirmBtn.disabled = checked.length < 2 || !name;
+    };
+    nameInput?.addEventListener('input', updateConfirm);
+    memberList?.addEventListener('change', updateConfirm);
+
+    confirmBtn?.addEventListener('click', () => {
+        const name = nameInput?.value.trim();
+        if (!name) { toastr.warning('请输入群名'); return; }
+        const checked = [...modal.querySelectorAll('.phone-member-checkbox:checked')];
+        if (checked.length < 2) { toastr.warning('至少选 2 个成员'); return; }
+        const memberContactIds = checked.map(c => c.dataset.cid);
+        try {
+            const gid = State.createGroup({ name, memberContactIds });
+            toastr.success(`已创建群聊「${name}」`);
+            close();
+            currentThread = gid;
+            rerender();
+        } catch (err) {
+            toastr.error(err.message || '创建失败');
+        }
+    });
+}
+
+function openGroupPhotoModeModal(groupId) {
+    const existing = phoneRoot?.querySelector('#phone-group-photo-modal');
+    if (existing) existing.remove();
+    if (!phoneRoot) return;
+    phoneRoot.insertAdjacentHTML('beforeend', renderGroupPhotoModeModal(groupId));
+    const modal = phoneRoot.querySelector('#phone-group-photo-modal');
+    if (!modal) return;
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelectorAll('.phone-mode-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            const gid = btn.dataset.groupId;
+            close();
+            openGroupPhotoMemberPick(gid, mode);
+        });
+    });
+}
+
+function openGroupPhotoMemberPick(groupId, mode) {
+    const existing = phoneRoot?.querySelector('#phone-group-photo-pick-modal');
+    if (existing) existing.remove();
+    if (!phoneRoot) return;
+    phoneRoot.insertAdjacentHTML('beforeend', renderGroupPhotoMemberPickModal({ groupId, mode }));
+    const modal = phoneRoot.querySelector('#phone-group-photo-pick-modal');
+    if (!modal) return;
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    // 引导跳联系人 tab 补外貌
+    modal.querySelectorAll('.phone-anchor-go-link').forEach(a => {
+        a.addEventListener('click', (e) => {
+            e.preventDefault();
+            close();
+            currentApp = 'messages';
+            currentMessagesSubTab = 'contacts';
+            currentThread = null;
+            rerender();
+            toastr.info('请点 ✨ 给该联系人生成外貌锚点，再回群聊重试');
+        });
+    });
+
+    const confirmBtn = modal.querySelector('#phone-group-photo-confirm');
+    const min = parseInt(confirmBtn.dataset.min, 10);
+    const max = parseInt(confirmBtn.dataset.max, 10);
+
+    const updateConfirm = () => {
+        const checked = modal.querySelectorAll('.phone-photo-member-checkbox:checked');
+        confirmBtn.textContent = `生成 (${checked.length}/${max})`;
+        confirmBtn.disabled = checked.length < min || checked.length > max;
+    };
+    modal.addEventListener('change', (e) => {
+        if (e.target.classList?.contains('phone-photo-member-checkbox')) {
+            const checked = modal.querySelectorAll('.phone-photo-member-checkbox:checked');
+            if (checked.length > max) {
+                e.target.checked = false;
+                toastr.warning(`最多选 ${max} 人`);
+            }
+            updateConfirm();
+        }
+    });
+
+    confirmBtn?.addEventListener('click', () => {
+        const checked = [...modal.querySelectorAll('.phone-photo-member-checkbox:checked')];
+        if (checked.length < min) { toastr.warning(`至少选 ${min} 人`); return; }
+        const targetMembers = checked.map(c => c.dataset.name);
+        const scene = modal.querySelector('#phone-group-photo-scene')?.value.trim() || '';
+        close();
+        submitGroupPhotoCommand({ groupId, mode, targetMembers, scene });
+    });
+}
+
+async function submitGroupPhotoCommand({ groupId, mode, targetMembers, scene }) {
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    const time = Protocol.nowHHMM();
+    const group = State.findGroup(groupId);
+    if (!group) return;
+    const members = State.resolveGroupMembers(group);
+    const memberNames = members.map(m => m.nameSnapshot);
+    const activeMemberNames = members.filter(m => !m.isDeleted).map(m => m.nameSnapshot);
+
+    const modeDescMap = {
+        selfie: '让 ' + targetMembers.join('、') + ' 发自拍',
+        group_photo: targetMembers.join('、') + ' 合影',
+        paired_group_photo: '分组合照：' + targetMembers.join('、'),
+        one_post_others_comment: targetMembers[0] + ' 发图，其他人评价',
+        each_own_scene: targetMembers.join('、') + ' 各自发不同场景',
+    };
+    State.appendGroupMessages(chatId, groupId, [{
+        from: ctx.name1 || '我',
+        type: 'text',
+        content: `[群聊生图指令] ${modeDescMap[mode] || mode}${scene ? `（场景：${scene}）` : ''}`,
+        time, me: true,
+    }]);
+    rerender();
+
+    const ta = document.querySelector('#send_textarea');
+    if (!ta) { toastr.error('找不到酒馆输入框'); return; }
+    const ooc = Protocol.buildGroupPostCommandOOC({
+        groupName: group.name,
+        memberNames, activeMemberNames,
+        mode, targetMembers, scene, time,
+    });
+    const safeOoc = Protocol.makeRequestSafe(ooc);
+    ta.value = `📱 <Request: ${safeOoc}>`;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#send_but')?.click();
+}
+
+function openGroupSettingsModal(groupId) {
+    const group = State.findGroup(groupId);
+    if (!group) return;
+    const members = State.resolveGroupMembers(group);
+    const memberRows = members.map(m => {
+        const tag = m.isDeleted ? '(已删除)' : (m.hasAnchor ? '✅有外貌' : '⚠无外貌');
+        const tagClass = m.isDeleted ? 'phone-anchor-deleted' : (m.hasAnchor ? 'phone-anchor-ok' : 'phone-anchor-warn');
+        return `<div class="phone-group-settings-row">
+            <span>${escapeHtml(m.nameSnapshot)}</span>
+            <span class="${tagClass}">${tag}</span>
+        </div>`;
+    }).join('');
+    const html = `<div class="phone-modal-bg" id="phone-group-settings-modal">
+        <div class="phone-modal">
+            <div class="phone-modal-hd">群设置</div>
+            <div class="phone-modal-body">
+                <div class="phone-form-row">
+                    <label class="phone-form-label">群名</label>
+                    <input type="text" id="phone-group-rename-input" class="phone-input" value="${escapeHtml(group.name)}" maxlength="20">
+                </div>
+                <div class="phone-form-row">
+                    <label class="phone-form-label">成员 (${members.filter(m => !m.isDeleted).length} 人)</label>
+                    <div class="phone-group-settings-members">${memberRows}</div>
+                </div>
+            </div>
+            <div class="phone-modal-ft">
+                <button class="phone-btn" data-modal-cancel>取消</button>
+                <button class="phone-btn phone-btn-warn" id="phone-group-delete-btn">删除</button>
+                <button class="phone-btn phone-btn-primary" id="phone-group-rename-confirm">保存</button>
+            </div>
+        </div>
+    </div>`;
+    const existing = phoneRoot?.querySelector('#phone-group-settings-modal');
+    if (existing) existing.remove();
+    phoneRoot.insertAdjacentHTML('beforeend', html);
+    const modal = phoneRoot.querySelector('#phone-group-settings-modal');
+    const close = () => modal.remove();
+    modal.querySelectorAll('[data-modal-cancel]').forEach(b => b.addEventListener('click', close));
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+    modal.querySelector('#phone-group-rename-confirm')?.addEventListener('click', () => {
+        const newName = modal.querySelector('#phone-group-rename-input')?.value.trim();
+        if (!newName) { toastr.warning('群名不能为空'); return; }
+        State.updateGroup(groupId, { name: newName });
+        toastr.success('已保存');
+        close();
+        rerender();
+    });
+    modal.querySelector('#phone-group-delete-btn')?.addEventListener('click', () => {
+        if (!confirm(`确定删除群聊「${group.name}」？聊天记录保留 30 天可恢复。`)) return;
+        State.softDeleteGroup(groupId);
+        toastr.success('群聊已删除');
+        close();
+        currentThread = null;
+        rerender();
+    });
+}

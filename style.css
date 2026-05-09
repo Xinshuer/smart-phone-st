@@ -363,6 +363,163 @@ img.wc-av { object-fit: cover; }
     outline: none; box-sizing: border-box;
 }
 .phone-bubble.me .bubble-edit-textarea { background: #fff; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   v0.14.0 群聊样式
+   ───────────────────────────────────────────────────────────────────── */
+
+/* 群聊列表项 — 跟单聊区分（淡背景 + 方角头像） */
+.phone-list-item-group {
+    background: #fafafa;
+}
+.phone-group-avatar {
+    border-radius: 8px; /* 方角，区别于联系人圆头像 */
+    color: #fff; font-weight: 700; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+}
+.phone-group-count {
+    font-size: 12px; color: #888; font-weight: 400;
+}
+
+/* 群聊气泡发送者标签 */
+.wc-msg-col {
+    display: flex; flex-direction: column; flex: 1; min-width: 0;
+}
+.wc-sender-name {
+    font-size: 11px; color: #888;
+    margin-bottom: 3px; padding-left: 2px;
+}
+.wc-sender-deleted {
+    color: #aaa; font-style: italic;
+}
+.wc-row-deleted .phone-bubble {
+    opacity: 0.55;
+    filter: grayscale(0.7);
+}
+
+/* 创建群聊 / 群聊生图 modal 通用 */
+.phone-modal-bg {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 2147483640;
+    display: flex; align-items: center; justify-content: center;
+    padding: 12px;
+}
+.phone-modal {
+    background: #fff;
+    border-radius: 12px;
+    max-width: 420px; width: 100%; max-height: 90vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+.phone-modal-hd {
+    padding: 14px 18px;
+    font-weight: 700; font-size: 15px;
+    border-bottom: 1px solid #eee;
+}
+.phone-modal-body {
+    flex: 1; overflow-y: auto;
+    padding: 14px 18px;
+}
+.phone-modal-ft {
+    display: flex; gap: 8px; justify-content: flex-end;
+    padding: 10px 14px;
+    border-top: 1px solid #eee;
+    flex-wrap: wrap;
+}
+.phone-form-row { margin-bottom: 12px; }
+.phone-form-label {
+    display: block; font-size: 12px; color: #555;
+    margin-bottom: 4px; font-weight: 500;
+}
+.phone-btn-primary {
+    background: #07c160; color: #fff; border: none;
+}
+.phone-btn-primary:hover { background: #06ad56; }
+.phone-btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+.phone-btn-warn {
+    background: #f56c6c; color: #fff; border: none;
+}
+.phone-btn-warn:hover { background: #e74c3c; }
+
+/* 成员选择列表 */
+.phone-member-list {
+    max-height: 300px; overflow-y: auto;
+    border: 1px solid #eee; border-radius: 6px;
+}
+.phone-member-pick {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f3f3;
+    cursor: pointer;
+    font-size: 13px;
+}
+.phone-member-pick:last-child { border-bottom: none; }
+.phone-member-pick:hover { background: #f8f8fa; }
+.phone-member-pick.no-anchor {
+    background: #fff5f5;
+}
+.phone-member-pick.disabled {
+    cursor: not-allowed; opacity: 0.6;
+}
+.phone-member-pick input[type="checkbox"] { flex-shrink: 0; }
+.phone-pick-av {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #888; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+    flex-shrink: 0; overflow: hidden;
+}
+img.phone-pick-av { object-fit: cover; }
+.phone-pick-name { flex: 1; min-width: 0; }
+.phone-anchor-ok { color: #07c160; font-size: 11px; }
+.phone-anchor-warn { color: #e74c3c; font-size: 11px; }
+.phone-anchor-deleted { color: #999; font-size: 11px; font-style: italic; }
+.phone-anchor-go-link {
+    color: #1976d2; font-size: 11px;
+    margin-left: 4px; text-decoration: none;
+}
+.phone-anchor-go-link:hover { text-decoration: underline; }
+
+/* 群聊生图模式选择 */
+.phone-mode-list {
+    display: flex; flex-direction: column; gap: 6px;
+}
+.phone-mode-item {
+    display: block; width: 100%; text-align: left;
+    padding: 10px 14px;
+    background: #fafafa; border: 1px solid #eee;
+    border-radius: 6px; cursor: pointer;
+}
+.phone-mode-item:hover { background: #f0f7ff; border-color: #1976d2; }
+.phone-mode-title {
+    font-size: 14px; font-weight: 600; color: #333;
+    margin-bottom: 2px;
+}
+.phone-mode-desc { font-size: 12px; color: #888; }
+
+/* 群设置内成员列表 */
+.phone-group-settings-members {
+    border: 1px solid #eee; border-radius: 6px;
+}
+.phone-group-settings-row {
+    display: flex; justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f3f3;
+    font-size: 13px;
+}
+.phone-group-settings-row:last-child { border-bottom: none; }
+
+/* 创建群聊按钮 */
+.phone-create-group-btn {
+    width: 100%; padding: 8px;
+    background: #07c160; color: #fff;
+    border: none; border-radius: 6px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+}
+.phone-create-group-btn:hover { background: #06ad56; }
 .bubble-edit-actions {
     display: flex; gap: 6px; justify-content: flex-end;
     margin-top: 6px;
