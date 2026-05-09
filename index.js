@@ -646,16 +646,14 @@ function onPromptReady(eventData) {
     const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
     const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel });
 
-    // v0.14.13 关键修复：协议注入位置改 chat 开头附近（角色卡之后、历史聊天之前）。
-    // 之前 push 到末尾 → AI 看到 prompt 最后是手机协议（user 预设的"正式开始本次任务"也在末尾）
-    // → AI 误判协议是最新指令、忽略真正的用户消息。
-    // splice(1, 0, ...) 插到角色卡 description 之后，让用户消息保持在最末，
-    // AI 自然把最后的用户消息当成最新指令。
-    if (Array.isArray(eventData.chat) && eventData.chat.length >= 1) {
-        eventData.chat.splice(1, 0, { role: 'system', content: styleRule });
-    } else {
-        eventData.chat.unshift({ role: 'system', content: styleRule });
-    }
+    // v0.14.17 改回 push 到 chat 末尾。
+    // 之前 v0.14.13 splice(1, 0, ...) 把协议插到角色卡之后/历史之前 → 但 ST 用户预设
+    // 把所有内容打包成"单条 user message"，里面末尾有 <输出模板> + "正式开始本次任务"
+    // 等冲突元指令。协议在 user message 之外无论怎么放都压不过 user message 内部末尾。
+    //
+    // 真正修复：协议 push 到 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）+
+    // 协议头部加"绝对覆盖元指令"明确压过 <输出模板>/<核心指导> 等预设要求。
+    eventData.chat.push({ role: 'system', content: styleRule });
 }
 
 async function onMessageReceived() {
