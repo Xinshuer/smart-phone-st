@@ -582,6 +582,7 @@ async function rerender() {
             onDeleteOrphans: handleDeleteAllOrphans,
             onImportFromOtherWorld: openImportFromOtherWorldModal,
             onEditContactSourceBook: openEditContactSourceBookModal,
+            onCleanupOrphanChats: openCleanupOrphanChatStatesModal,
         });
     }
 
@@ -1684,6 +1685,66 @@ function handleDeleteAllOrphans() {
     State.save();
     toastr.success(`已删除 ${orphanNames.size} 个未归属联系人`);
     rerender();
+}
+
+// v0.14.25 chat-state 孤儿清理 modal
+function openCleanupOrphanChatStatesModal() {
+    const ctx = getContext();
+    const currentChatId = ctx?.chatId || '';
+    const list = State.listAllChatStates();
+    if (list.length === 0) { toastr.info('没有任何 chat state 数据'); return; }
+
+    const fmtSize = (n) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`;
+    const totalBytes = list.reduce((a, x) => a + x.sizeBytes, 0);
+
+    const rows = list.map((x) => {
+        const isCurrent = x.chatId === currentChatId;
+        const summary = `联系人 ${x.activeContacts} / 私聊 ${x.threadCount}（${x.messageCount} 条）/ 群聊 ${x.groupThreadCount}（${x.groupMessageCount} 条）/ 朋友圈 ${x.momentsCount} / 论坛 ${x.forumCount} / 小红书 ${x.xhsCount}`;
+        return `
+        <div class="phone-orphan-row" style="display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid var(--SmartThemeBorderColor,#444);">
+            <input type="checkbox" class="phone-cleanup-check" data-cid="${escapeHtml(x.chatId)}" ${isCurrent ? 'disabled' : ''}>
+            <div style="flex:1; min-width:0;">
+                <div style="font-weight:bold; word-break:break-all;">${escapeHtml(x.chatId)}${isCurrent ? ' <span style="color:#4a9;">（当前 chat）</span>' : ''}</div>
+                <div style="font-size:11px; color:var(--SmartThemeQuoteColor,#888); margin-top:2px;">${escapeHtml(summary)}</div>
+                <div style="font-size:11px; color:var(--SmartThemeQuoteColor,#888);">体积：${fmtSize(x.sizeBytes)}</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    const body = `
+        <p class="phone-settings-hint">
+            共 ${list.length} 个 chat state，总体积 ${fmtSize(totalBytes)}。当前 chat 不能勾选（防误删）。<br>
+            <strong>注意</strong>：本插件无法判断哪个 chat 是被酒馆删卡产生的孤儿——你**必须自己识别**哪些 chatId 已经不再用。删除后**不可恢复**（联系人/消息/朋友圈/论坛/小红书全删）。
+        </p>
+        <div style="margin:8px 0;">
+            <button type="button" id="phone-cleanup-select-all" class="phone-btn">全选可删项</button>
+            <button type="button" id="phone-cleanup-unselect-all" class="phone-btn">全不选</button>
+        </div>
+        <div style="max-height:50vh; overflow-y:auto;">${rows}</div>
+    `;
+    const footer = `
+        <button type="button" class="phone-forward-cancel">取消</button>
+        <button type="button" class="phone-forward-submit phone-btn-danger" id="phone-cleanup-confirm">删除已选</button>
+    `;
+    const modal = openContactsModal('🧹 chat state 清理', body, footer);
+    if (!modal) return;
+
+    modal.querySelector('#phone-cleanup-select-all')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-cleanup-check:not([disabled])').forEach((cb) => cb.checked = true);
+    });
+    modal.querySelector('#phone-cleanup-unselect-all')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-cleanup-check').forEach((cb) => cb.checked = false);
+    });
+    modal.querySelector('.phone-forward-cancel')?.addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-cleanup-confirm')?.addEventListener('click', () => {
+        const ids = [...modal.querySelectorAll('.phone-cleanup-check:checked')].map(cb => cb.dataset.cid);
+        if (ids.length === 0) { toastr.info('未选任何项'); return; }
+        if (!confirm(`确认删除 ${ids.length} 个 chat state？此操作不可恢复。`)) return;
+        const removed = State.purgeChatStates(ids);
+        toastr.success(`已删除 ${removed} 个 chat state`);
+        modal.remove();
+        rerender();
+    });
 }
 
 // Cross-world import: select contacts from inactive worlds → add active worlds to their sourceBook
