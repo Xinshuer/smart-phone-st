@@ -697,21 +697,30 @@ async function onMessageReceived() {
         }
     }
 
+    // v0.14.29 STRICT 模式判定：上一条 user 消息含实时手机指令 → AI 这一轮该只输出 PHONE 块
+    // 提前计算用于 reasoning-hint 兜底 + 后续 strip 双模式
+    const _prevUser = idx > 0 ? ctx.chat[idx - 1] : null;
+    const _userText = (_prevUser && _prevUser.is_user) ? (_prevUser.mes || '') : '';
+    const isStrictMode =
+        /\[实时手机指令——/.test(_userText) ||
+        /Request:\s*\*\*\s*【\s*实时手机指令/.test(_userText) ||
+        /Request:\s*【实时手机指令/.test(_userText) ||
+        /Request:\s*\[实时手机指令/.test(_userText);
+
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
     if (!parsed) {
         // Bug 3 兜底：模型完全没输出 PHONE 块（只有 reasoning prose / 闲聊），
-        // 检测中文推理特征 → 替换为 📱 占位避免散文污染聊天，并不持久化（让用户能 regenerate）。
-        // v0.12.4 hints 扩展 + 阈值降到 1（只要含明显推理词就触发）。
-        // v0.14.12 关键修复：之前只改 msg.mes 没调 updateMessageBlock → ST 气泡 DOM 不刷新
-        //         导致用户仍看到思维链。补上 updateBlock + saveChat 让 UI 立即更新。
-        if (msg.mes && msg.mes.length > 150) {
+        // 检测中文推理特征 → 替换为 📱 占位避免散文污染聊天。
+        // v0.14.29：仅在 STRICT 模式下兜底（user 点了手机 UI 按钮但 AI 输出了思维链而非 PHONE 块）。
+        //          NORMAL 模式下（正常剧情）AI 本就该写 prose，"我需要/首先/让我"等是合法创作语，
+        //          不应误判为思维链污染剧情正文。
+        if (isStrictMode && msg.mes && msg.mes.length > 150) {
             const reasoningHints = [
                 '好的，我', '好的我', '我需要', '首先', '我们来看看', '让我', '用户的任务',
                 '对话连贯性', '用户希望', '考虑到', '所以我', '处理这个用户', '处理用户',
                 '用户通过', '用户要求', '用户指定', '根据用户', '根据角色', '根据核心准则',
                 '我注意到', '具体输出时', '具体编写', '在编写时', '在具体输出', 'pic prompt 必须',
                 '严格遵守', '严格遵循', '在具体回复', '我应该让', '我需要让',
-                // v0.14.12 补常见 hits（用户实测漏的）
                 '现在用户', '现在我', '让我们', '让我们设计', '让我们看', '让我看', '让我先',
                 '现在规划', '所以应该', '所以可以', '所以我应该', '我会', '我可以', '注意，',
                 '需要避免', '需要注意', '可能问题', '应该输出', '只需要输出', '只需输出',
@@ -747,7 +756,9 @@ async function onMessageReceived() {
     const chatId = ctx.chatId || 'default';
 
     // Phase D — pending command-character post: splice user images into matching post & flag for auto-reply
-    const triggerInfos = []; // [{platform, postId}] for auto-reply after dispatch
+    // v0.14.29: 同回合附带 AI 输出的 inline COMMENT 标签作为 NPC 评论挂到主帖（消除以前
+    // 异步二次调用 NPC 评论概率失败的问题）。若 AI 没吐评论才退回到异步 fallback。
+    const triggerInfos = []; // [{platform, postId, inlineComments}] for auto-reply after dispatch
     if (pendingPostCommand) {
         const cmd = pendingPostCommand;
         let arr, label;
@@ -757,18 +768,51 @@ async function onMessageReceived() {
         if (arr && arr.length) {
             // Fuzzy match — AI may drop title suffix etc. ("沈清瑶·仙盟盟主" → "沈清瑶")
             const target = cmd.targetName || '';
-            let idx = arr.findIndex((p) => p.from === target);
-            if (idx === -1) idx = arr.findIndex((p) => p.from && (target.includes(p.from) || p.from.includes(target)));
+            let pIdx = arr.findIndex((p) => p.from === target);
+            if (pIdx === -1) pIdx = arr.findIndex((p) => p.from && (target.includes(p.from) || p.from.includes(target)));
             // Last resort: take the first post (AI emitted exactly one post for our command)
-            if (idx === -1 && arr.length === 1) idx = 0;
-            if (idx !== -1) {
-                arr[idx].images = [...cmd.imageUrls];
-                arr[idx].pic = null;             // strict: only user-attached images
-                arr[idx].commandedByUser = true;  // marker for source flag in renderer
-                arr[idx].from = cmd.targetName;   // normalize FROM back to full contact name
-                if ('author' in arr[idx]) arr[idx].author = cmd.targetName;
-                if ('user' in arr[idx]) arr[idx].user = cmd.targetName;
-                triggerInfos.push({ platform: label, postId: arr[idx].id });
+            if (pIdx === -1 && arr.length === 1) pIdx = 0;
+            if (pIdx !== -1) {
+                const post = arr[pIdx];
+                post.images = [...cmd.imageUrls];
+                post.pic = null;             // strict: only user-attached images
+                post.commandedByUser = true;  // marker for source flag in renderer
+                post.from = cmd.targetName;   // normalize FROM back to full contact name
+                if ('author' in post) post.author = cmd.targetName;
+                if ('user' in post) post.user = cmd.targetName;
+
+                // v0.14.29 inline COMMENT → 转换成 platform-native 格式挂到 post
+                const inlineComments = (parsed.comments || []).filter(c => {
+                    // 过滤掉 FROM 是 user / 主帖作者自己的 / 空内容的评论
+                    if (!c.content || !c.from) return false;
+                    if (c.from === cmd.targetName || c.from === 'user') return false;
+                    return true;
+                });
+                if (inlineComments.length > 0) {
+                    if (cmd.platform === '论坛') {
+                        // forum 用 replies 字段 + author / content / time
+                        post.replies = inlineComments.map((c, i) => ({
+                            id: `reply_inline_${Date.now()}_${i}`,
+                            from: c.from,
+                            author: c.from,
+                            content: c.content,
+                            replyTo: c.replyTo || null,
+                            time: c.time || cmd.time,
+                        }));
+                    } else {
+                        // moments / xhs 用 comments 字段 + authorName / content / time
+                        post.comments = inlineComments.map((c, i) => ({
+                            id: `cmt_inline_${Date.now()}_${i}`,
+                            from: c.from,
+                            authorName: c.from,
+                            content: c.content,
+                            replyTo: c.replyTo || null,
+                            time: c.time || cmd.time,
+                        }));
+                    }
+                }
+
+                triggerInfos.push({ platform: label, postId: post.id, inlineCount: inlineComments.length });
                 pendingPostCommand = null;
             }
         }
@@ -827,13 +871,18 @@ async function onMessageReceived() {
         }
     }
 
-    // After-dispatch: auto-trigger "吃瓜 NPC" / contacts comments for commanded posts (Phase D #7)
+    // v0.14.29 After-dispatch: 只在 AI 没吐 inline COMMENT 时才走异步 fallback 二次调用
+    // 若 inlineCount >= 2 → AI 已经把评论挂上了，跳过异步调用（消除概率失败）
     for (const info of triggerInfos) {
+        if (info.inlineCount >= 2) {
+            console.log(`[smart-phone] v0.14.29 inline ${info.inlineCount} comments attached to ${info.platform} post — skipping async fallback`);
+            continue;
+        }
+        // AI 没吐评论或只吐了 1 条 → 走异步生成补足
         setTimeout(async () => {
             try {
                 if (info.platform === '朋友圈') {
                     const post = State.findMomentsPost(chatId, info.postId);
-                    // v0.14.10 fresh feed 排除 tempOrigin 联系人
                     const contacts = State.load().contacts.filter(c => !c.tempOrigin);
                     if (post) await generateMomentReplies(chatId, info.postId, post, contacts, ctx);
                 } else if (info.platform === '论坛') {
@@ -843,15 +892,17 @@ async function onMessageReceived() {
                     await generateStrangerComments(chatId, info.postId, ctx);
                 }
                 rerender();
-            } catch (err) { console.error('[smart-phone] command-post auto-reply failed:', err); }
+            } catch (err) { console.error('[smart-phone] command-post auto-reply fallback failed:', err); }
         }, 600);
     }
 
-    // Strip the <PHONE> block from displayed message — always show 📱 placeholder
-    // so prose never leaks into the ST chat bubble (single-mode v0.14.24).
+    // v0.14.29 双模式 strip 策略：
+    //   STRICT mode（user 点了手机 UI 按钮）→ 整条替换为 📱（PHONE 块已路由到 UI，prose 是泄漏）
+    //   NORMAL mode（普通剧情）→ 仅剥 PHONE 块，保留 prose（AI 正常写的剧情）
+    // 这样修复 user 输入"正式开始本次任务"等剧情触发词时 AI 被错误锁进 PHONE-only 模式的问题。
     const stripped = Protocol.stripPhoneBlock(msg.mes);
     if (stripped !== msg.mes) {
-        msg.mes = '📱';
+        msg.mes = isStrictMode ? '📱' : (stripped || '📱');
         try {
             const updateBlock = (await import('../../../../script.js')).updateMessageBlock;
             if (typeof updateBlock === 'function') updateBlock(idx, msg);
@@ -2483,8 +2534,11 @@ async function submitCommandPost({ targetName, platform, instruction, imageUrls 
         pendingPostCommand = null;
         return;
     }
+    // v0.14.29 同回合 NPC 评论：把当前联系人池传给 OOC 让 AI 一次性生成主帖 + 3-6 条评论
+    const allContacts = State.load().contacts.filter(c => !c.tempOrigin).map(c => c.name);
     const ooc = Protocol.buildPostCommandOOC({
         targetName, time, platform, instruction, imageCount: imageUrls.length,
+        otherContactNames: allContacts,
     });
     const safeOoc = Protocol.makeRequestSafe(ooc);
     ta.value = `📱 <Request: ${safeOoc}>`;
