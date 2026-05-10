@@ -622,6 +622,18 @@ function bindEvents() {
 function onPromptReady(eventData) {
     const s = State.load();
     if (!s.enabled) return;
+
+    // v0.14.24 单轨化 STEP 1：原地 strip 预设的格式/字数/扩写冲突 token。
+    // 在 chat 数组上修改，让 AI 看不到 <输出模板> / <正文> / 字数 / 扩写任务等。
+    // 比 prompt 描述层"覆盖"更稳：直接从输入剥掉冲突指令。
+    if (Array.isArray(eventData.chat)) {
+        for (const msg of eventData.chat) {
+            if (msg && typeof msg.content === 'string') {
+                msg.content = Protocol.stripConflictingPresetTokens(msg.content);
+            }
+        }
+    }
+
     const contacts = s.contacts.map((c) => ({ name: c.name, note: c.note }));
     const lore = (s.worldbook?.importedEntries || []).filter((e) => e.type === 'lore' && e.enabled);
 
@@ -646,13 +658,8 @@ function onPromptReady(eventData) {
     const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
     const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel });
 
-    // v0.14.17 改回 push 到 chat 末尾。
-    // 之前 v0.14.13 splice(1, 0, ...) 把协议插到角色卡之后/历史之前 → 但 ST 用户预设
-    // 把所有内容打包成"单条 user message"，里面末尾有 <输出模板> + "正式开始本次任务"
-    // 等冲突元指令。协议在 user message 之外无论怎么放都压不过 user message 内部末尾。
-    //
-    // 真正修复：协议 push 到 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）+
-    // 协议头部加"绝对覆盖元指令"明确压过 <输出模板>/<核心指导> 等预设要求。
+    // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
+    // 协议放 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）。
     eventData.chat.push({ role: 'system', content: styleRule });
 }
 
