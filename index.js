@@ -624,6 +624,11 @@ function onPromptReady(eventData) {
     const s = State.load();
     if (!s.enabled) return;
 
+    // v0.14.26 检测插件内部 quiet 调用（NPC 评论 / 视觉档案外貌生成 等走 generateQuietPrompt
+    // 路径），跳过 strip + 协议 push。否则 AI 会把 NPC 评论请求当成手机指令，输出 PHONE 块
+    // 而不是我们需要的 JSON 数组，导致朋友圈/论坛/小红书 NPC 评论生成失败。
+    if (window.__smartPhoneInternalQuietCall) return;
+
     // v0.14.24 单轨化 STEP 1：原地 strip 预设的格式/字数/扩写冲突 token。
     // 在 chat 数组上修改，让 AI 看不到 <输出模板> / <正文> / 字数 / 扩写任务等。
     // 比 prompt 描述层"覆盖"更稳：直接从输入剥掉冲突指令。
