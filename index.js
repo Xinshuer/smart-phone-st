@@ -2640,7 +2640,9 @@ function openCreateGroupModal() {
         if (checked.length < 2) { toastr.warning('至少选 2 个成员'); return; }
         const memberContactIds = checked.map(c => c.dataset.cid);
         try {
-            const gid = State.createGroup({ name, memberContactIds });
+            // v0.14.23 群聊建立时捕获当前激活世界书（同 contact sourceBook 逻辑）
+            const sourceBook = getActiveBookNames();
+            const gid = State.createGroup({ name, memberContactIds, sourceBook });
             toastr.success(`已创建群聊「${name}」`);
             close();
             currentThread = gid;
