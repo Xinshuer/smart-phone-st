@@ -568,7 +568,7 @@ async function rerender() {
             onComfyuiUrlChange: handleComfyuiUrlChange,
             onToggleLore: handleToggleLore,
             onToggleWorldContext: handleToggleWorldContext,
-            onRefresh: () => { toastr.info('刷新中…'); rerender(); },
+            onRefresh: handleSettingsRefresh,
             onApiSave: handleApiSave,
             onApiTest: handleApiTest,
             onApiTriggerNow: () => toastr.info('该功能保留给手动调用，目前消息生成走主聊天 AI'),
@@ -1041,6 +1041,32 @@ async function handleMomentsClear() {
     await handleMomentsRefresh();
 }
 
+// v0.14.28 设置页 🔄 按钮：重新扫激活世界书 + 比对 sourceHash 自动 resync 联系人。
+// 用户重新导入修改过的卡 / 直接编辑 worldbook 条目后，点这个就刷新 anchor.prompt / note。
+// anchor.locked=true 的联系人 anchor.prompt 不会被覆盖（用户锁定优先）。
+// anchor.referenceImage / seed 永远不动。
+// 老数据（0.14.27 之前）首次扫描仅 backfill sourceHash，不动 anchor.prompt 防止覆盖用户手编。
+async function handleSettingsRefresh() {
+    toastr.info('扫描世界书 + 同步联系人…');
+    try {
+        const result = await State.resyncContacts(WB.resyncContactsFromActiveBooks);
+        const { backfilled, updated, unchanged, missing } = result;
+        const parts = [];
+        if (updated > 0) parts.push(`✅ ${updated} 条更新（条目内容变更）`);
+        if (backfilled > 0) parts.push(`📌 ${backfilled} 条首次记录 hash（老数据，未动外貌）`);
+        if (unchanged > 0) parts.push(`${unchanged} 未变`);
+        if (missing > 0) parts.push(`⚠ ${missing} 条目在激活世界书中找不到`);
+        const msg = parts.length ? parts.join('，') : '无可同步的联系人';
+        if (updated > 0) toastr.success(msg);
+        else if (missing > 0) toastr.warning(msg);
+        else toastr.info(msg);
+    } catch (e) {
+        console.warn('[smart-phone] resync failed:', e);
+        toastr.error('同步失败，看 console');
+    }
+    rerender();
+}
+
 async function handleMomentsRefresh() {
     // v0.14.10 fresh feed 排除 tempOrigin: true 联系人 (升级自陌生人的临时 NPC 不主动发朋友圈)
     const contacts = State.load().contacts.filter(c => !c.tempOrigin);
@@ -1271,16 +1297,24 @@ async function handleImportContact(uid, bookName) {
         const oldSb = Array.isArray(existing.sourceBook) ? existing.sourceBook : (existing.sourceBook ? [existing.sourceBook] : []);
         const newSb = Array.isArray(fresh.sourceBook) ? fresh.sourceBook : (fresh.sourceBook ? [fresh.sourceBook] : []);
         const mergedSb = [...new Set([...oldSb, ...newSb])];
-        // Update rawContent + bookName + sourceBook merge; KEEP existing anchor (user's hard work)
+        // v0.14.28：
+        // - 永远保留 anchor.referenceImage / seed / locked（用户人设图、用户锁定）
+        // - anchor.prompt：未锁定时刷新为 fresh.anchor.prompt（用户主动 re-import 的意图就是要新值）
+        // - sourceHash 同步到 fresh.sourceHash，避免之后 🔄 resync 重复触发覆盖
+        const existingAnchor = existing.anchor || {};
+        const updatedAnchor = existingAnchor.locked
+            ? { ...existingAnchor }
+            : { ...existingAnchor, prompt: (fresh.anchor.prompt && fresh.anchor.prompt.trim()) || existingAnchor.prompt };
         State.upsertContact({
             ...existing,
             rawContent: fresh.rawContent,
             note: fresh.note,
             bookName: fresh.bookName || existing.bookName,
             sourceBook: mergedSb,
-            // existing.anchor preserved via spread
+            sourceHash: fresh.sourceHash,
+            anchor: updatedAnchor,
         });
-        toastr.success(`已更新：${fresh.name}（保留人设图）`);
+        toastr.success(`已更新：${fresh.name}（保留人设图，外貌 tag 已${existingAnchor.locked ? '锁定不变' : '同步'}）`);
     } else {
         State.upsertContact(fresh);
         toastr.success(`已导入：${fresh.name}`);
@@ -1326,57 +1360,8 @@ function handlePromptEdit(name, prompt) {
     State.save();
 }
 
-/**
- * Phase 2: 解析 entry content 里的【视觉档案】表。
- * 优于 DeepSeek 散文路径：确定性、零温度漂移、零 API 消耗、可手编。
- * 返回 null 表示未找到表（fallback 到 DeepSeek）。
- */
-function extractVisualProfile(content) {
-    if (!content || typeof content !== 'string') return null;
-    const m = content.match(/##\s*【视觉档案】[\s\S]*?【\/视觉档案】/);
-    if (!m) return null;
-    const profile = {};
-    for (const line of m[0].split('\n')) {
-        if (!line.trim().startsWith('|')) continue;
-        if (line.includes('字段') && line.includes('booru')) continue; // header
-        if (/^\|[\s\-:]+\|/.test(line)) continue; // markdown separator |---|---|
-        const cells = line.split('|').map(s => s.trim());
-        // cells[0]='', cells[1]=字段, cells[2]=中文描述, cells[3]=booru锚点, cells[4]=''
-        if (cells.length < 4) continue;
-        const field = cells[1];
-        const booru = cells[3];
-        if (!field || !booru || booru === '—') continue;
-        profile[field] = booru;
-    }
-    return Object.keys(profile).length >= 5 ? profile : null;
-}
-
-/**
- * 把视觉档案 profile 拼成 SD prompt。
- * 角色锚 tag 加权 1.2（提供原作脸 prior，但让 1.3-1.4 的显式 tag 主导身材/颜色）。
- */
-function buildAppearanceFromProfile(profile) {
-    const parts = [];
-    const anchor = profile['角色锚 tag'];
-    if (anchor && anchor !== '—' && !anchor.startsWith('(')) {
-        parts.push(`(${anchor}:1.2)`);
-    }
-    const order = [
-        '年龄类', '体型类', '种族', '皮肤', '脸型', '五官', '妆',
-        '头发色', '头发长度', '头发造型', '头发装饰',
-        '眼睛色', '眼睛形状', '眼睛细节',
-        '胸', '腰', '臀', '大腿', '四肢',
-        '服装大类',
-    ];
-    for (const f of order) {
-        const v = profile[f];
-        if (v && v !== '—') parts.push(v);
-    }
-    const appearance = parts.join(', ');
-    const QUALITY = 'masterpiece, best quality, highres, absurdres, intricate details';
-    return { appearance, full: `${QUALITY}, ${appearance}` };
-}
-
+// v0.14.28 extractVisualProfile / buildAppearanceFromProfile 已移到 lib/worldbook.js
+// （供 entryToContact 在 import 时 + resyncContactsFromActiveBooks 检测变更时复用）
 async function handleGenerateAppearance(name, btn) {
     const c = State.findContact(name);
     if (!c?.rawContent) return toastr.warning('联系人没有世界书内容，无法生成外貌 tags');
@@ -1386,9 +1371,9 @@ async function handleGenerateAppearance(name, btn) {
 
     try {
         // === Phase 2: 优先尝试【视觉档案】表（确定性 + 零 API 消耗）===
-        const profile = extractVisualProfile(c.rawContent);
+        const profile = WB.extractVisualProfile(c.rawContent);
         if (profile) {
-            const { appearance, full } = buildAppearanceFromProfile(profile);
+            const { appearance, full } = WB.buildAppearanceFromProfile(profile);
             if (!c.anchor) c.anchor = {};
             c.anchor.prompt = appearance;
             c.anchor.sdPrompt = full;
