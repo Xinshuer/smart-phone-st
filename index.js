@@ -1048,8 +1048,9 @@ async function handleMomentsRefresh() {
     toastr.info('生成朋友圈动态…');
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
-    const worldCtxEntries = State.getWorldContext();
-    const worldContextText = worldCtxEntries.length ? await WB.fetchWorldContextText(worldCtxEntries) : '';
+    // v0.14.27 自动跟随当前激活世界书：filter stale + fallback 抽 lore
+    const worldCtxEntries = await WB.getEffectiveWorldContextEntries(State.getWorldContext());
+    const worldContextText = worldCtxEntries.length ? await WB.fetchWorldContextText(worldCtxEntries, { maxCharsPerEntry: 800 }) : '';
     const posts = await generateContactMoments(chatId, contacts, ctx, worldContextText);
     if (posts.length) { toastr.success(`新增 ${posts.length} 条动态`); rerender(); }
     else toastr.warning('生成失败（检查手机 API 配置）');
@@ -1128,9 +1129,10 @@ async function handleForumRefresh() {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     toastr.info('生成新帖子…');
-    const worldCtxEntries = State.getWorldContext();
+    // v0.14.27 自动跟随当前激活世界书：filter stale + fallback 抽 lore
+    const worldCtxEntries = await WB.getEffectiveWorldContextEntries(State.getWorldContext());
     let worldContextText = '';
-    if (worldCtxEntries.length) worldContextText = await WB.fetchWorldContextText(worldCtxEntries);
+    if (worldCtxEntries.length) worldContextText = await WB.fetchWorldContextText(worldCtxEntries, { maxCharsPerEntry: 800 });
     const posts = await generateFreshPosts(chatId, ctx, worldContextText);
     if (posts.length) { toastr.success(`新增 ${posts.length} 条帖子`); rerender(); }
     else toastr.warning('生成失败（检查手机 API 配置）');
@@ -1236,9 +1238,10 @@ async function handleXhsRefresh() {
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
     toastr.info('生成新帖子…');
-    const worldCtxEntries = State.getWorldContext();
+    // v0.14.27 自动跟随当前激活世界书：filter stale + fallback 抽 lore
+    const worldCtxEntries = await WB.getEffectiveWorldContextEntries(State.getWorldContext());
     const worldContextText = worldCtxEntries.length
-        ? await WB.fetchWorldContextText(worldCtxEntries)
+        ? await WB.fetchWorldContextText(worldCtxEntries, { maxCharsPerEntry: 800 })
         : '';
     const posts = await generateFreshFeed(chatId, ctx, worldContextText);
     if (posts.length) {
