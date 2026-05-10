@@ -842,7 +842,7 @@ async function onMessageReceived() {
     }
 
     // Strip the <PHONE> block from displayed message — always show 📱 placeholder
-    // so prose from Mode B never leaks into the ST chat bubble.
+    // so prose never leaks into the ST chat bubble (single-mode v0.14.24).
     const stripped = Protocol.stripPhoneBlock(msg.mes);
     if (stripped !== msg.mes) {
         msg.mes = '📱';
