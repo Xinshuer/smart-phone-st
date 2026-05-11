@@ -710,6 +710,23 @@ function normalizeSmsTimes(smsArr) {
     }
 }
 
+// v0.14.37 群聊 TIME 单调重排：群聊里 N 个成员交错发言，所有 GMSG 按 emission
+// 顺序统一时间轴递增（不按 FROM 分组）。AV 多图叙事可能有 10+ 条 GMSG，间隔可
+// 比 SMS 小（群聊本就更密集），用 +0..+3 分钟更自然。
+function normalizeGroupTimes(groupArr) {
+    if (!Array.isArray(groupArr) || groupArr.length < 2) return;
+    let minutes = parseHHMM(groupArr[0].time);
+    if (minutes === null) {
+        const d = new Date();
+        minutes = d.getHours() * 60 + d.getMinutes();
+    }
+    for (let i = 0; i < groupArr.length; i++) {
+        groupArr[i].time = formatHHMM(minutes);
+        // 群聊节奏更密，0-3 分钟之内变化（有的连发瞬间）
+        minutes += Math.floor(Math.random() * 4);
+    }
+}
+
 async function onMessageReceived() {
     const s = State.load();
     if (!s.enabled) return;
@@ -794,42 +811,55 @@ async function onMessageReceived() {
         }
     }
 
-    // v0.14.30 AV 多图叙事：从 SMS pic prompt 里剥 STAGE 标签（不影响 ComfyUI 生图）
-    // + 同 FROM 连发 SMS 的 TIME 单调重排（防 AI 时钟算术不可靠）。
-    // 只对 SMS 路径执行，moments/forum/xhs/group 不动。
-    // v0.14.31 关键修复：makeRequestSafe 会剥光 [ ] 方括号，所以原来 [STAGE:xxx] 到 AI
-    // 那里已经变成裸 STAGE:xxx，AI 自然照抄无方括号。换成 @@STAGE:xxx@@ 双 @ 分隔符。
-    // 兼容旧版：仍接受 [STAGE:xxx]（万一 AI 凭记忆写） 和裸 STAGE:xxx（v0.14.30 残留）。
-    if (parsed.sms?.length) {
-        // 三选一兼容匹配：@@STAGE:xxx@@（新）/ [STAGE:xxx]（旧）/ 裸 STAGE:xxx（fallback）
-        const STAGE_IN_PROMPT_RE = /(?:@@\s*STAGE\s*:\s*([\w-]+)\s*@@|\[\s*STAGE\s*:\s*([\w-]+)\s*\]|\bSTAGE\s*:\s*([\w-]+)\b)\s*/gi;
-        const VALID_STAGES = new Set([
-            'foreplay','enter','switch','climax','aftermath',
-            'prep','display','escalate',
-            'approach','deep','finish',
-            'arousal','peak','afterglow',
-            'setup','torment','break','aftercare',
-        ]);
-        for (const sms of parsed.sms) {
-            if (!sms.pic) continue;
-            // 提取 stage 名（取第一个标签作 sms.stage，留 debug 用）
-            const firstM = STAGE_IN_PROMPT_RE.exec(sms.pic);
-            STAGE_IN_PROMPT_RE.lastIndex = 0; // 重置 g 状态
+    // v0.14.30 AV 多图叙事：从 SMS/GMSG pic prompt 里剥 STAGE 标签（不影响 ComfyUI 生图）
+    // + TIME 单调重排（防 AI 时钟算术不可靠）。
+    // v0.14.31 关键修复：makeRequestSafe 会剥光 [ ] 方括号，换成 @@STAGE:xxx@@ 双 @ 分隔符。
+    // v0.14.37 拓展到 parsed.group（群聊 AV 多图叙事），新加 orgy_* / trigger / react_X 阶段。
+    //
+    // 三选一兼容匹配 + 共享白名单
+    const STAGE_IN_PROMPT_RE = /(?:@@\s*STAGE\s*:\s*([\w-]+)\s*@@|\[\s*STAGE\s*:\s*([\w-]+)\s*\]|\bSTAGE\s*:\s*([\w-]+)\b)\s*/gi;
+    const VALID_STAGES = new Set([
+        // sex_act
+        'foreplay','enter','switch','climax','aftermath',
+        // exhibition_act
+        'prep','display','escalate',
+        // oral_act
+        'approach','deep','finish',
+        // solo_act
+        'arousal','peak','afterglow',
+        // bdsm_act
+        'setup','torment','break','aftercare',
+        // v0.14.37 group_orgy
+        'orgy_intro','orgy_a','orgy_b','orgy_climax','orgy_aftermath',
+        // v0.14.37 group_chain_post
+        'trigger','react_1','react_2','react_3','react_4','react_5',
+    ]);
+    function stripStageFromPic(itemArr) {
+        for (const item of itemArr) {
+            if (!item.pic) continue;
+            const firstM = STAGE_IN_PROMPT_RE.exec(item.pic);
+            STAGE_IN_PROMPT_RE.lastIndex = 0;
             if (firstM) {
-                // 三个 capture group 对应 @@@/[ ]/bare，取第一个非 undefined 的
                 const stage = (firstM[1] || firstM[2] || firstM[3] || '').toLowerCase();
                 if (stage) {
-                    sms.stage = stage;
+                    item.stage = stage;
                     if (!VALID_STAGES.has(stage)) {
-                        console.warn(`[smart-phone v0.14.31] unknown STAGE label "${stage}" — stripping anyway`);
+                        console.warn(`[smart-phone v0.14.37] unknown STAGE label "${stage}" — stripping anyway`);
                     }
                 }
-                // 全部剥光（包括多重 / 嵌中间的）
-                sms.pic = sms.pic.replace(STAGE_IN_PROMPT_RE, '');
+                item.pic = item.pic.replace(STAGE_IN_PROMPT_RE, '');
             }
         }
-        // TIME 单调重排：同 FROM 连续 ≥ 2 条 SMS → 强制 +2..+8 分钟递增
+    }
+    if (parsed.sms?.length) {
+        stripStageFromPic(parsed.sms);
+        // SMS 路径：同 FROM 连续 ≥ 2 条 → +2..+8 分钟递增
         normalizeSmsTimes(parsed.sms);
+    }
+    if (parsed.group?.length) {
+        stripStageFromPic(parsed.group);
+        // 群聊路径：所有 GMSG 按 emission 顺序单调递增（不按 FROM 分组，群聊里 N 个成员交错发言）
+        normalizeGroupTimes(parsed.group);
     }
 
     const chatId = ctx.chatId || 'default';
