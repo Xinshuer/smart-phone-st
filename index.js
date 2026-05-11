@@ -1129,7 +1129,10 @@ async function handleSendSMS(text) {
 
     const ta = document.querySelector('#send_textarea');
     if (!ta) { toastr.error('找不到酒馆输入框'); return; }
-    const ooc = Protocol.buildSendOOC({ targetName: currentThread, time, userText: text, isGroup: false });
+    // v0.14.34 透传当前联系人的视觉档案 anchor 给 AI（第 5.7 步外貌锚定铁律）
+    const _targetContact = State.findContact(currentThread);
+    const _targetAnchor = _targetContact?.anchor?.prompt || '';
+    const ooc = Protocol.buildSendOOC({ targetName: currentThread, time, userText: text, isGroup: false, targetAnchor: _targetAnchor });
     const safeOoc = Protocol.makeRequestSafe(ooc);
     ta.value = `📱 <Request: ${safeOoc}>`;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
