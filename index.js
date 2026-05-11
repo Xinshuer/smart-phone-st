@@ -669,6 +669,47 @@ function onPromptReady(eventData) {
     eventData.chat.push({ role: 'system', content: styleRule });
 }
 
+// v0.14.30 同 FROM 连续 ≥ 2 条 SMS 的 TIME 单调重排
+// 用途：AI 输出 AV 多图叙事时往往 TIME 算术不可靠（重复/倒退/超 60 分）。
+// 策略：找连续同 FROM 段 → 基线 = 第一条原 TIME → 后续每条 +random(2,8) 分钟。
+// 副作用：普通连发 2-3 条短信也会被规整（间隔 2-8 分钟），可接受。
+function parseHHMM(s) {
+    if (!s || typeof s !== 'string') return null;
+    const m = s.trim().match(/^(\d{1,2})\s*[:：]\s*(\d{1,2})$/);
+    if (!m) return null;
+    const h = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+    return h * 60 + mm;
+}
+function formatHHMM(totalMinutes) {
+    let mm = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    const h = Math.floor(mm / 60), m = mm % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+function normalizeSmsTimes(smsArr) {
+    if (!Array.isArray(smsArr) || smsArr.length < 2) return;
+    // 按 emission 顺序找同 FROM 连续段
+    let i = 0;
+    while (i < smsArr.length) {
+        let j = i;
+        while (j < smsArr.length && smsArr[j].from === smsArr[i].from) j++;
+        const groupLen = j - i;
+        if (groupLen >= 2) {
+            // 基线：优先用第一条原 TIME（合法 HH:MM），否则用当前墙钟
+            let minutes = parseHHMM(smsArr[i].time);
+            if (minutes === null) {
+                const d = new Date();
+                minutes = d.getHours() * 60 + d.getMinutes();
+            }
+            for (let k = i; k < j; k++) {
+                smsArr[k].time = formatHHMM(minutes);
+                minutes += 2 + Math.floor(Math.random() * 7); // +2..+8 分钟
+            }
+        }
+        i = j;
+    }
+}
+
 async function onMessageReceived() {
     const s = State.load();
     if (!s.enabled) return;
@@ -751,6 +792,39 @@ async function onMessageReceived() {
                 if (!sms.pic && pi < prosePics.length) sms.pic = prosePics[pi++];
             }
         }
+    }
+
+    // v0.14.30 AV 多图叙事：从 SMS pic prompt 里剥 [STAGE:xxx] 标签（不影响 ComfyUI 生图）
+    // + 同 FROM 连发 SMS 的 TIME 单调重排（防 AI 时钟算术不可靠）。
+    // 只对 SMS 路径执行，moments/forum/xhs/group 不动。
+    if (parsed.sms?.length) {
+        // 宽容匹配：空格 / 大小写 / 中文括号；用 g flag 剥光多重标签
+        // 注意是 prompt 内容里的 STAGE 前缀，不是 <pic> 整体外
+        const STAGE_IN_PROMPT_RE = /\[\s*STAGE\s*:\s*([\w-]+)\s*\]\s*/gi;
+        const VALID_STAGES = new Set([
+            'foreplay','enter','switch','climax','aftermath',
+            'prep','display','escalate',
+            'approach','deep','finish',
+            'arousal','peak','afterglow',
+            'setup','torment','break','aftercare',
+        ]);
+        for (const sms of parsed.sms) {
+            if (!sms.pic) continue;
+            // 提取 stage 名（取第一个标签作 sms.stage，留 debug 用）
+            const firstM = STAGE_IN_PROMPT_RE.exec(sms.pic);
+            STAGE_IN_PROMPT_RE.lastIndex = 0; // 重置 g 状态
+            if (firstM) {
+                const stage = firstM[1].toLowerCase();
+                sms.stage = stage;
+                if (!VALID_STAGES.has(stage)) {
+                    console.warn(`[smart-phone v0.14.30] unknown STAGE label "${stage}" — stripping anyway`);
+                }
+                // 全部剥光（包括多重 / 嵌中间的）
+                sms.pic = sms.pic.replace(STAGE_IN_PROMPT_RE, '');
+            }
+        }
+        // TIME 单调重排：同 FROM 连续 ≥ 2 条 SMS → 强制 +2..+8 分钟递增
+        normalizeSmsTimes(parsed.sms);
     }
 
     const chatId = ctx.chatId || 'default';
