@@ -794,13 +794,15 @@ async function onMessageReceived() {
         }
     }
 
-    // v0.14.30 AV 多图叙事：从 SMS pic prompt 里剥 [STAGE:xxx] 标签（不影响 ComfyUI 生图）
+    // v0.14.30 AV 多图叙事：从 SMS pic prompt 里剥 STAGE 标签（不影响 ComfyUI 生图）
     // + 同 FROM 连发 SMS 的 TIME 单调重排（防 AI 时钟算术不可靠）。
     // 只对 SMS 路径执行，moments/forum/xhs/group 不动。
+    // v0.14.31 关键修复：makeRequestSafe 会剥光 [ ] 方括号，所以原来 [STAGE:xxx] 到 AI
+    // 那里已经变成裸 STAGE:xxx，AI 自然照抄无方括号。换成 @@STAGE:xxx@@ 双 @ 分隔符。
+    // 兼容旧版：仍接受 [STAGE:xxx]（万一 AI 凭记忆写） 和裸 STAGE:xxx（v0.14.30 残留）。
     if (parsed.sms?.length) {
-        // 宽容匹配：空格 / 大小写 / 中文括号；用 g flag 剥光多重标签
-        // 注意是 prompt 内容里的 STAGE 前缀，不是 <pic> 整体外
-        const STAGE_IN_PROMPT_RE = /\[\s*STAGE\s*:\s*([\w-]+)\s*\]\s*/gi;
+        // 三选一兼容匹配：@@STAGE:xxx@@（新）/ [STAGE:xxx]（旧）/ 裸 STAGE:xxx（fallback）
+        const STAGE_IN_PROMPT_RE = /(?:@@\s*STAGE\s*:\s*([\w-]+)\s*@@|\[\s*STAGE\s*:\s*([\w-]+)\s*\]|\bSTAGE\s*:\s*([\w-]+)\b)\s*/gi;
         const VALID_STAGES = new Set([
             'foreplay','enter','switch','climax','aftermath',
             'prep','display','escalate',
@@ -814,10 +816,13 @@ async function onMessageReceived() {
             const firstM = STAGE_IN_PROMPT_RE.exec(sms.pic);
             STAGE_IN_PROMPT_RE.lastIndex = 0; // 重置 g 状态
             if (firstM) {
-                const stage = firstM[1].toLowerCase();
-                sms.stage = stage;
-                if (!VALID_STAGES.has(stage)) {
-                    console.warn(`[smart-phone v0.14.30] unknown STAGE label "${stage}" — stripping anyway`);
+                // 三个 capture group 对应 @@@/[ ]/bare，取第一个非 undefined 的
+                const stage = (firstM[1] || firstM[2] || firstM[3] || '').toLowerCase();
+                if (stage) {
+                    sms.stage = stage;
+                    if (!VALID_STAGES.has(stage)) {
+                        console.warn(`[smart-phone v0.14.31] unknown STAGE label "${stage}" — stripping anyway`);
+                    }
                 }
                 // 全部剥光（包括多重 / 嵌中间的）
                 sms.pic = sms.pic.replace(STAGE_IN_PROMPT_RE, '');
