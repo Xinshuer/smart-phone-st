@@ -663,10 +663,15 @@ function onPromptReady(eventData) {
     // v0.14.8 传当前 SD 模型 → protocol 按 model 给陌生角色不同 pic prompt 建议
     const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
 
-    // v0.14.39 检测本回合是否 STRICT 手机指令模式（用户消息含 [实时手机指令——] 或
-    // OOC Request: 包装）。仅 STRICT 模式才注入 AV 多图叙事段。否则普通 RP 对话不该
-    // 看到 AV 规则（不然 AI 会把任何对话当 SMS/GMSG 出多张图）。
+    // v0.14.39 检测本回合是否 STRICT 手机指令模式（用户消息含 [实时手机指令——]）
+    // v0.14.40 进一步检测是否明确请求图片（仅 STRICT + image-request 才注入 AV 多图）。
+    // 缺一不可：
+    //   STRICT + image-request → AV 多图（含 pic）
+    //   STRICT + 无 image-request → 纯文字 SMS/GMSG，无 pic
+    //   非 STRICT → 正常 RP prose
+    const IMAGE_REQUEST_RE = /(照片|相片|图片|图像|拍照|拍张|拍个|拍组|拍.{0,5}张|拍.{0,5}相|拍腿|拍奶|拍胸|拍屁股|拍小穴|拍逼|拍阴|拍脚|拍脸|拍全身|拍背|拍脖|拍肩|拍腰|拍上半身|拍下半身|发图|发照|发张|发一张|发几张|发个图|发一组|发自拍|发个|发组|看看你|看看她|看看妈|看看姐|看看你的|看看她的|看看妈的|看看姐的|给我看|让我看|让.{1,3}看|让大家看|让他们看|让他看|让她看|自拍|穿搭|镜子前|视频|录像|直播|走光|露(?:点|奶|逼|穴|胸|屁股)|脱.{0,3}拍|脱了发|show me|selfie)/i;
     let isStrictTurn = false;
+    let isImageRequest = false;
     if (Array.isArray(eventData.chat)) {
         for (let i = eventData.chat.length - 1; i >= 0; i--) {
             const msg = eventData.chat[i];
@@ -678,10 +683,18 @@ function onPromptReady(eventData) {
                 || /Request:\s*\[实时手机指令/.test(txt)) {
                 isStrictTurn = true;
             }
+            // 检测 image-request：从 OOC 段提取 user 真实输入（"用户发送的短信内容：「X」" 括号里）
+            // OOC 头部含协议元指令，我们要从中提取 user 真正写的话
+            const userTextMatch = txt.match(/用户发送的短信内容[：:]\s*[「「『\[]([\s\S]*?)[」」』\]]/);
+            const userActualText = userTextMatch ? userTextMatch[1] : txt;
+            if (IMAGE_REQUEST_RE.test(userActualText)) {
+                isImageRequest = true;
+            }
             break; // 只看最后一条 user 消息
         }
     }
-    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel, includeAVSections: isStrictTurn });
+    const includeAVSections = isStrictTurn && isImageRequest;
+    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel, includeAVSections, isStrictTurn, isImageRequest });
 
     // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
     // 协议放 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）。
