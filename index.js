@@ -662,7 +662,26 @@ function onPromptReady(eventData) {
 
     // v0.14.8 传当前 SD 模型 → protocol 按 model 给陌生角色不同 pic prompt 建议
     const currentModel = s.imageGen?.currentModel || 'wai_anihentai';
-    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel });
+
+    // v0.14.39 检测本回合是否 STRICT 手机指令模式（用户消息含 [实时手机指令——] 或
+    // OOC Request: 包装）。仅 STRICT 模式才注入 AV 多图叙事段。否则普通 RP 对话不该
+    // 看到 AV 规则（不然 AI 会把任何对话当 SMS/GMSG 出多张图）。
+    let isStrictTurn = false;
+    if (Array.isArray(eventData.chat)) {
+        for (let i = eventData.chat.length - 1; i >= 0; i--) {
+            const msg = eventData.chat[i];
+            if (!msg || msg.role !== 'user') continue;
+            const txt = String(msg.content || '');
+            if (/\[实时手机指令——/.test(txt)
+                || /Request:\s*\*\*\s*【\s*实时手机指令/.test(txt)
+                || /Request:\s*【实时手机指令/.test(txt)
+                || /Request:\s*\[实时手机指令/.test(txt)) {
+                isStrictTurn = true;
+            }
+            break; // 只看最后一条 user 消息
+        }
+    }
+    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel, includeAVSections: isStrictTurn });
 
     // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
     // 协议放 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）。
