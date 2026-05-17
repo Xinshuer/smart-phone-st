@@ -961,16 +961,37 @@ async function onMessageReceived() {
 
     // v0.14.41 NPC_PROFILE 标签处理（在 SMS/GMSG 之前先存 strangerAnchor，
     // 这样后续 SMS 的 SUBJECT="X" 路由解析能找到 X 的 anchor）
+    // v0.14.42 升级：必填字段校验 + toast 通知 + 跨重名检测
+    const savedNpcNames = []; // 本回合保存的新 NPC 名（用于后续 toast）
     if (parsed.npcProfiles?.length) {
         const existingContactNames = new Set(State.load().contacts.map(c => c.name));
+        // 群成员名也排除
+        const allMemberNames = new Set();
+        for (const g of (State.load().groups || [])) {
+            for (const m of (g.members || [])) {
+                if (m.nameSnapshot) allMemberNames.add(m.nameSnapshot);
+            }
+        }
         for (const npc of parsed.npcProfiles) {
-            // 重名跟现有联系人 → 跳过（协议禁止但兜底）
             if (existingContactNames.has(npc.name)) {
-                console.warn(`[smart-phone] NPC_PROFILE "${npc.name}" 跟现有联系人重名，跳过`);
+                console.warn(`[smart-phone v0.14.42] NPC_PROFILE "${npc.name}" 跟现有联系人重名，跳过`);
+                toastr.warning(`AI 引入的 NPC「${npc.name}」跟现有联系人重名，已忽略人设`);
+                continue;
+            }
+            if (allMemberNames.has(npc.name)) {
+                console.warn(`[smart-phone v0.14.42] NPC_PROFILE "${npc.name}" 跟群成员重名，跳过`);
+                toastr.warning(`AI 引入的 NPC「${npc.name}」跟群成员重名，已忽略人设`);
+                continue;
+            }
+            // v0.14.42 必填字段校验
+            if (!npc.validation?.valid) {
+                console.warn(`[smart-phone v0.14.42] NPC_PROFILE "${npc.name}" 不合格：${(npc.validation?.missing || []).join(', ')}`);
+                toastr.warning(`AI 引入的 NPC「${npc.name}」人设不完整（缺：${(npc.validation?.missing || []).join(', ')}），plugin 未保存。点 ↩ 重新生成可能修正。`, '', { timeOut: 8000 });
                 continue;
             }
             if (!npc.coreBooru) {
-                console.warn(`[smart-phone] NPC_PROFILE "${npc.name}" 缺外貌 booru，跳过`);
+                console.warn(`[smart-phone v0.14.42] NPC_PROFILE "${npc.name}" 缺外貌 booru，跳过`);
+                toastr.warning(`AI 引入的 NPC「${npc.name}」缺外貌 booru，下次出现会换样。点 ↩ 重新生成可能修正。`);
                 continue;
             }
             State.saveStrangerAnchor(chatId, npc.name, {
@@ -980,7 +1001,43 @@ async function onMessageReceived() {
                 worldbook: npc.worldbook,
                 picTagSource: npc.profile.slice(0, 200),
             });
-            console.log(`[smart-phone v0.14.41] NPC_PROFILE 已缓存: ${npc.name} (${npc.kind})`);
+            savedNpcNames.push(npc.name);
+            console.log(`[smart-phone v0.14.42] NPC_PROFILE 已缓存: ${npc.name} (${npc.kind})`);
+        }
+        // 汇总 toast
+        if (savedNpcNames.length > 0) {
+            toastr.success(
+                `🆕 AI 引入了 ${savedNpcNames.length} 个新 NPC：${savedNpcNames.join('、')}\n（已缓存外貌锚 + 完整人设）`,
+                '新 NPC 出现',
+                { timeOut: 6000 },
+            );
+        }
+    }
+
+    // v0.14.42 检测"AI 用了 SUBJECT 但没输 NPC_PROFILE"的情况
+    // 即 SMS/GMSG 的 SUBJECT="X" 但 X 不在联系人 / 不在群成员 / 不在本回合 NPC_PROFILE
+    if (parsed.sms?.length || parsed.group?.length) {
+        const knownNames = new Set([
+            ...State.load().contacts.map(c => c.name),
+            ...savedNpcNames,
+            ...((State.load().groups || []).flatMap(g => (g.members || []).map(m => m.nameSnapshot))),
+        ]);
+        // 也容忍 strangerAnchor 里已存的（之前回合的）
+        for (const sa of State.listStrangerAnchors(chatId)) knownNames.add(sa.name);
+        const orphanSubjects = new Set();
+        for (const item of [...(parsed.sms || []), ...(parsed.group || [])]) {
+            if (item.subject && !knownNames.has(item.subject)) {
+                orphanSubjects.add(item.subject);
+            }
+        }
+        if (orphanSubjects.size > 0) {
+            const names = [...orphanSubjects].join('、');
+            toastr.warning(
+                `AI 用 SUBJECT="${names}" 但没输 NPC_PROFILE 提供该 NPC 人设。图会出但视觉锚无法保存，下次出现会变样。建议点 ↩ 重新生成。`,
+                'NPC 人设缺失',
+                { timeOut: 8000 },
+            );
+            console.warn(`[smart-phone v0.14.42] orphan SUBJECT: ${[...orphanSubjects].join(', ')} — 无对应 NPC_PROFILE`);
         }
     }
 
@@ -2427,6 +2484,14 @@ function bindGlobalEventDelegation() {
             e.stopPropagation();
             return;
         }
+        // v0.14.42 新 NPC chip 点击 → 弹升级 modal
+        const npcChip = e.target.closest && e.target.closest('.phone-new-npc-chip');
+        if (npcChip && npcChip.dataset.npcName) {
+            e.preventDefault();
+            e.stopPropagation();
+            promoteStrangerHandler(npcChip.dataset.npcName);
+            return;
+        }
         // Reroll button has its own handler in rerender (with stopPropagation); skip here.
         if (e.target.closest && e.target.closest('.phone-img-reroll-btn')) return;
         let img = e.target.closest && e.target.closest('img.phone-pic');
@@ -3110,17 +3175,71 @@ function openStrangerEditModal(name) {
 }
 
 function promoteStrangerHandler(name) {
-    if (!confirm(`将「${name}」升级为正式联系人？\n\n升级后联系人会自动加入当前激活的世界书，可点 ✨ 生成完整外貌锚点。\n注意：升级后的联系人 不会 主动出现在朋友圈/小红书/论坛 fresh feed 里（除非你主动 cue ta）。`)) return;
+    // v0.14.42 弹完整 preview modal（不再单行 confirm）让用户预览 profile 后决定
+    openPromoteStrangerPreviewModal(name);
+}
+
+// v0.14.42 升级陌生人为联系人时的 preview modal（含完整 profile + 外貌锚预览）
+function openPromoteStrangerPreviewModal(name) {
+    if (!phoneRoot) return;
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
-    const activeBooks = getActiveBookNames();
-    const ok = State.promoteStrangerToContact(chatId, name, activeBooks);
-    if (ok) {
-        toastr.success(`「${name}」已升级为联系人，可在联系人 tab 看到`);
-        rerender();
-    } else {
-        toastr.error('升级失败');
+    const sa = State.getStrangerAnchor(chatId, name);
+    if (!sa) {
+        toastr.error(`找不到陌生角色「${name}」的人设档案`);
+        return;
     }
+    const existing = document.getElementById('phone-promote-modal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'phone-promote-modal';
+    modal.className = 'phone-forward-modal';
+    const activeBooks = getActiveBookNames();
+    const kindLabel = ({ real_origin_female: '写实女', fictional_female: '二次元/古风女', real_origin_male: '写实男', fictional_male: '二次元/古风男' })[sa.kind] || sa.kind;
+    const profileHtml = sa.profile
+        ? `<pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:400px;overflow:auto;background:#f5f5f5;padding:8px;border-radius:4px">${escapeHtml(sa.profile)}</pre>`
+        : '<em>无完整人设档案，仅有外貌 booru</em>';
+    modal.innerHTML = `
+        <div class="phone-forward-modal-content" style="max-width:560px">
+            <div class="phone-forward-modal-header">
+                <h3>升级 NPC 为正式联系人</h3>
+                <button class="phone-forward-modal-close">✕</button>
+            </div>
+            <div class="phone-forward-modal-body">
+                <div style="margin-bottom:8px"><b>姓名：</b>${escapeHtml(name)}</div>
+                <div style="margin-bottom:8px"><b>类型：</b>${escapeHtml(kindLabel)}（${escapeHtml(sa.kind || '')}）</div>
+                <div style="margin-bottom:8px"><b>世界书归属：</b>${activeBooks.length ? escapeHtml(activeBooks.join(' / ')) : '<em>无激活世界书</em>'}</div>
+                <div style="margin-bottom:8px"><b>外貌 booru anchor：</b><br>
+                    <code style="display:block;background:#f5f5f5;padding:6px;border-radius:4px;font-size:11px;word-break:break-word">${escapeHtml(sa.core || '<em>未提取</em>')}</code>
+                </div>
+                <div style="margin-bottom:8px"><b>完整人设：</b>${profileHtml}</div>
+                <p style="font-size:12px;color:#888;margin-top:12px">
+                    ⚠ 升级后：
+                    <br>· 自动加入当前激活的世界书（${activeBooks.length ? escapeHtml(activeBooks.join(',')) : '无'}）
+                    <br>· tempOrigin=true → 不会主动出现在朋友圈/小红书/论坛 fresh feed
+                    <br>· 仅当你在聊天里主动 cue 时 AI 才会让 ta 出现
+                    <br>· 完整人设写入 contact.rawContent，✨ 按钮可重新提取 anchor
+                </p>
+            </div>
+            <div class="phone-forward-modal-footer">
+                <button class="phone-btn" id="phone-promote-cancel">取消</button>
+                <button class="phone-btn phone-btn-primary" id="phone-promote-confirm">确认升级</button>
+            </div>
+        </div>
+    `;
+    (getModalContainer() || phoneRoot).appendChild(modal);
+    modal.querySelector('.phone-forward-modal-close').addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-promote-cancel').addEventListener('click', () => modal.remove());
+    modal.querySelector('#phone-promote-confirm').addEventListener('click', () => {
+        const ok = State.promoteStrangerToContact(chatId, name, activeBooks);
+        if (ok) {
+            toastr.success(`「${name}」已升级为联系人，可在联系人 tab 看到`);
+            modal.remove();
+            rerender();
+        } else {
+            toastr.error('升级失败');
+        }
+    });
 }
 
 function deleteStrangerHandler(name) {
