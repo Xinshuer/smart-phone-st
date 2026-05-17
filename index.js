@@ -959,6 +959,31 @@ async function onMessageReceived() {
         }
     }
 
+    // v0.14.41 NPC_PROFILE 标签处理（在 SMS/GMSG 之前先存 strangerAnchor，
+    // 这样后续 SMS 的 SUBJECT="X" 路由解析能找到 X 的 anchor）
+    if (parsed.npcProfiles?.length) {
+        const existingContactNames = new Set(State.load().contacts.map(c => c.name));
+        for (const npc of parsed.npcProfiles) {
+            // 重名跟现有联系人 → 跳过（协议禁止但兜底）
+            if (existingContactNames.has(npc.name)) {
+                console.warn(`[smart-phone] NPC_PROFILE "${npc.name}" 跟现有联系人重名，跳过`);
+                continue;
+            }
+            if (!npc.coreBooru) {
+                console.warn(`[smart-phone] NPC_PROFILE "${npc.name}" 缺外貌 booru，跳过`);
+                continue;
+            }
+            State.saveStrangerAnchor(chatId, npc.name, {
+                kind: npc.kind,
+                core: npc.coreBooru,
+                profile: npc.profile,
+                worldbook: npc.worldbook,
+                picTagSource: npc.profile.slice(0, 200),
+            });
+            console.log(`[smart-phone v0.14.41] NPC_PROFILE 已缓存: ${npc.name} (${npc.kind})`);
+        }
+    }
+
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
     if (parsed.moments?.length) State.appendMoments(chatId, parsed.moments);
     if (parsed.forum?.length) State.appendForum(chatId, parsed.forum);
@@ -1003,6 +1028,7 @@ async function onMessageReceived() {
                 me: false,
                 pic: g.pic,
                 subjects: g.subjects, // 多角色合影时下游用
+                subject: g.subject, // v0.14.41 单数 SUBJECT，A 发 B 照片时填 B
             });
             byGroup.set(targetGroup.id, arr);
         }
@@ -1194,7 +1220,13 @@ async function handleSendSMS(text) {
     // v0.14.34 透传当前联系人的视觉档案 anchor 给 AI（第 5.7 步外貌锚定铁律）
     const _targetContact = State.findContact(currentThread);
     const _targetAnchor = _targetContact?.anchor?.prompt || '';
-    const ooc = Protocol.buildSendOOC({ targetName: currentThread, time, userText: text, isGroup: false, targetAnchor: _targetAnchor });
+    // v0.14.41 跨 thread 上下文 — 找其他联系人最近 24h 提到 currentThread 的对话注入 OOC
+    const _crossThreadMentions = State.findCrossThreadMentions(chatId, currentThread, { hoursWindow: 24, perThreadMax: 3, totalMax: 8 });
+    const ooc = Protocol.buildSendOOC({
+        targetName: currentThread, time, userText: text, isGroup: false,
+        targetAnchor: _targetAnchor,
+        crossThreadMentions: _crossThreadMentions,
+    });
     const safeOoc = Protocol.makeRequestSafe(ooc);
     ta.value = `📱 <Request: ${safeOoc}>`;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
