@@ -694,7 +694,14 @@ function onPromptReady(eventData) {
         }
     }
     const includeAVSections = isStrictTurn && isImageRequest;
-    const styleRule = Protocol.buildProtocolPrompt({ contacts, lore, activeGroup, currentModel, includeAVSections, isStrictTurn, isImageRequest });
+    // v0.14.43 NPC 排除名单（user 点 🎲 换 NPC 后注入）
+    const rerollExclude = (window.__smartPhone_rerollExcludeNpcs && window.__smartPhone_rerollExcludeNpcs.size > 0)
+        ? Array.from(window.__smartPhone_rerollExcludeNpcs)
+        : [];
+    const styleRule = Protocol.buildProtocolPrompt({
+        contacts, lore, activeGroup, currentModel, includeAVSections, isStrictTurn, isImageRequest,
+        rerollExcludeNpcs: rerollExclude,
+    });
 
     // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
     // 协议放 chat 末尾让它成为 AI 看到的最后一段（位置最高权重）。
@@ -957,6 +964,12 @@ async function onMessageReceived() {
                 pendingPostCommand = null;
             }
         }
+    }
+
+    // v0.14.43 AI 回复返回 → 清空 NPC 排除名单（已经用过一次）
+    if (window.__smartPhone_rerollExcludeNpcs && window.__smartPhone_rerollExcludeNpcs.size > 0) {
+        console.log(`[smart-phone v0.14.43] 清空 NPC 排除名单：${[...window.__smartPhone_rerollExcludeNpcs].join(', ')}`);
+        window.__smartPhone_rerollExcludeNpcs.clear();
     }
 
     // v0.14.41 NPC_PROFILE 标签处理（在 SMS/GMSG 之前先存 strangerAnchor，
@@ -2492,6 +2505,14 @@ function bindGlobalEventDelegation() {
             promoteStrangerHandler(npcChip.dataset.npcName);
             return;
         }
+        // v0.14.43 换不同 NPC 按钮 → reroll regenerate with exclusion
+        const npcReroll = e.target.closest && e.target.closest('.phone-new-npc-reroll');
+        if (npcReroll && npcReroll.dataset.npcName) {
+            e.preventDefault();
+            e.stopPropagation();
+            rerollAsDifferentNpcHandler(npcReroll.dataset.npcName);
+            return;
+        }
         // Reroll button has its own handler in rerender (with stopPropagation); skip here.
         if (e.target.closest && e.target.closest('.phone-img-reroll-btn')) return;
         let img = e.target.closest && e.target.closest('img.phone-pic');
@@ -3177,6 +3198,52 @@ function openStrangerEditModal(name) {
 function promoteStrangerHandler(name) {
     // v0.14.42 弹完整 preview modal（不再单行 confirm）让用户预览 profile 后决定
     openPromoteStrangerPreviewModal(name);
+}
+
+// v0.14.43 换不同 NPC handler — user 点 🎲 后：
+// 1. 把 X 加入 rerollExclusion 集（持续到下次 AI 回复后清空）
+// 2. 删 strangerAnchor[X]（释放视觉锚）
+// 3. pop 最后一批 NPC 消息（包含含 X 的 SMS）
+// 4. trigger ST regenerate
+// 5. onPromptReady 会读 rerollExclusion 注入 OOC："上次叫 X 的 NPC 不合适，请引入完全不同的"
+// 6. AI 重出 → 新 NPC_PROFILE + 新 SUBJECT
+async function rerollAsDifferentNpcHandler(name) {
+    if (!confirm(`换一个跟「${name}」**完全不同**的 NPC？\n\n会：\n1. 删除当前「${name}」的视觉档案（chat-scoped strangerAnchor）\n2. 撤销上一回合 AI 回复\n3. 让 ST 重新生成，要求 AI 引入跟「${name}」完全不同的新 NPC（姓名/外貌/身份/性格都换）\n\n确认？`)) return;
+
+    const ctx = getContext();
+    const chatId = ctx.chatId || 'default';
+    if (!currentThread) { toastr.warning('请先打开一个聊天'); return; }
+
+    // 1. 加入排除名单（窗口级临时集合）
+    if (!window.__smartPhone_rerollExcludeNpcs) window.__smartPhone_rerollExcludeNpcs = new Set();
+    window.__smartPhone_rerollExcludeNpcs.add(name);
+
+    // 2. 删 stranger anchor
+    State.removeStrangerAnchor(chatId, name);
+
+    // 3. pop 最后一批 NPC 消息（同 handleReroll 流程）
+    const removed = State.popLastNpcBatch(chatId, currentThread);
+    if (!removed.length) {
+        toastr.warning('没有可撤销的 AI 回复（可能聊天已被手动清理）');
+        window.__smartPhone_rerollExcludeNpcs.delete(name);
+        return;
+    }
+    for (const m of removed) {
+        if (m.pic) picUrlCache.delete(m.pic);
+    }
+    rerender();
+
+    // 4. trigger ST regenerate
+    try {
+        const { Generate, is_send_press } = await import('../../../../script.js');
+        if (is_send_press) { toastr.warning('正在生成中，请稍候'); return; }
+        toastr.info(`已删除「${name}」+ 撤销上一回合，让 AI 重出一个不同的 NPC`);
+        Generate('regenerate');
+    } catch (err) {
+        console.error('[smart-phone v0.14.43] reroll-different-npc failed:', err);
+        toastr.error('重新生成失败');
+        window.__smartPhone_rerollExcludeNpcs.delete(name); // 失败时撤回
+    }
 }
 
 // v0.14.42 升级陌生人为联系人时的 preview modal（含完整 profile + 外貌锚预览）
