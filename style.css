@@ -1046,6 +1046,35 @@ img.phone-pick-av { object-fit: cover; }
 }
 .phone-forward-submit:hover { background: #06ad56; }
 
+/* v0.14.44 promote-stranger modal extras —— 复用 .phone-forward-card 结构后给完整人设
+ * 一个固定 max-height 区，profile 长时滚动而不是把 modal 顶高出手机壳。 */
+.phone-promote-profile-pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 11px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #f5f5f5;
+    padding: 8px;
+    border-radius: 4px;
+    margin: 4px 0 0 0;
+}
+.phone-promote-booru-code {
+    display: block;
+    background: #f5f5f5;
+    padding: 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    word-break: break-word;
+    margin-top: 4px;
+}
+.phone-promote-warn {
+    font-size: 11px;
+    color: #888;
+    margin: 8px 0 0 0;
+    line-height: 1.5;
+}
+
 /* Command-character post modal extras (Phase D) */
 .pf-cmd-platform-row { display: flex; gap: 6px; margin-bottom: 4px; }
 .pf-cmd-section-label { font-size: 11px; color: #6b7280; margin-top: 4px; }
@@ -1220,22 +1249,37 @@ img.phone-pick-av { object-fit: cover; }
 .xhs-nav-compose { background: #ff2442; color: #fff; border: none; border-radius: 20px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-weight: 500; }
 .xhs-nav-compose:hover { background: #e8001f; }
 
-/* 瀑布流 */
-.xhs-feed { columns: 2; gap: 6px; padding: 6px; overflow-y: auto; flex: 1; }
+/* v0.14.45 统一 2 列 grid（之前 columns:2 是 CSS 多列瀑布流，标题 1/2 行不齐就错位；
+ * 不同角色卡的不同标题长度会导致排版起伏。改用 CSS Grid 锁定 2 列，所有卡片同高） */
+.xhs-feed {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: min-content;
+    gap: 6px;
+    padding: 6px;
+    overflow-y: auto;
+    flex: 1;
+    align-content: start;
+}
 
-/* 卡片 */
-.xhs-card { break-inside: avoid; margin-bottom: 6px; border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.06); cursor: pointer; transition: transform 0.15s; }
+/* 卡片 — grid 模式下不需要 break-inside / margin-bottom（grid 用 gap） */
+.xhs-card { border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.06); cursor: pointer; transition: transform 0.15s; display: flex; flex-direction: column; }
 .xhs-card:hover { transform: translateY(-2px); }
 
 /* 图片区 — 3:4 比例 */
-.xhs-card-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; position: relative; padding: 0; text-align: left; }
+.xhs-card-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; position: relative; padding: 0; text-align: left; flex-shrink: 0; }
 .xhs-card-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
 .xhs-card-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
 @keyframes xhs-shimmer { 0% { background-position: 200% } 100% { background-position: -200% } }
 
-/* 卡片底部 */
+/* 卡片底部 — title 锁定 2 行最小高度（1 行 / 2 行标题都占 2 行空间） */
 .xhs-card-footer { padding: 6px 8px 8px; }
-.xhs-card-title { font-size: 12px; font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #1a1a1a; }
+.xhs-card-title {
+    font-size: 12px; font-weight: 500; line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; color: #1a1a1a;
+    min-height: calc(1.4em * 2); /* 锁两行高度，1 行标题也占满 → 所有卡同高 */
+}
 .xhs-card-meta { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
 .xhs-card-avatar { width: 16px; height: 16px; border-radius: 50%; background: #ff2442; color: #fff; font-size: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .xhs-card-user { font-size: 10px; color: #555; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

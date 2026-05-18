@@ -665,10 +665,18 @@ function onPromptReady(eventData) {
 
     // v0.14.39 检测本回合是否 STRICT 手机指令模式（用户消息含 [实时手机指令——]）
     // v0.14.40 进一步检测是否明确请求图片（仅 STRICT + image-request 才注入 AV 多图）。
+    // v0.14.44 ⚠️ 关键修复：之前 4 个正则全要求 `[` 或 `【` 前缀，但 makeRequestSafe 把这些括号
+    //   剥成空格 → 用户消息里只有裸的 `实时手机指令——手机短信`，正则全部失败 → isStrictTurn
+    //   永远 false → noPicMetaRule / AV 段从未注入 → AI 只能靠 protocol 自然语言 "Request:" 启发式
+    //   判 STRICT，regenerate 时尤其不稳（reroll 命中率骤降）。改成匹配实际存活的裸标记。
     // 缺一不可：
     //   STRICT + image-request → AV 多图（含 pic）
     //   STRICT + 无 image-request → 纯文字 SMS/GMSG，无 pic
     //   非 STRICT → 正常 RP prose
+    // v0.14.44 audit fix: 协议里 3 个 OOC builder 用了 2 种分隔符（buildSendOOC 用 ——；
+    //   buildPostOOC + buildGroupPostCommandOOC 用 ·），且 buildGroupPostCommandOOC 的 marker
+    //   词是 "实时群聊生图指令" 不是 "实时手机指令"。需同时覆盖 3 种变体。
+    const STRICT_MARKER_RE = /实时(?:手机指令|群聊生图指令)[·—]/;
     const IMAGE_REQUEST_RE = /(照片|相片|图片|图像|拍照|拍张|拍个|拍组|拍.{0,5}张|拍.{0,5}相|拍腿|拍奶|拍胸|拍屁股|拍小穴|拍逼|拍阴|拍脚|拍脸|拍全身|拍背|拍脖|拍肩|拍腰|拍上半身|拍下半身|发图|发照|发张|发一张|发几张|发个图|发一组|发自拍|发个|发组|看看你|看看她|看看妈|看看姐|看看你的|看看她的|看看妈的|看看姐的|给我看|让我看|让.{1,3}看|让大家看|让他们看|让他看|让她看|自拍|穿搭|镜子前|视频|录像|直播|走光|露(?:点|奶|逼|穴|胸|屁股)|脱.{0,3}拍|脱了发|show me|selfie)/i;
     let isStrictTurn = false;
     let isImageRequest = false;
@@ -677,17 +685,16 @@ function onPromptReady(eventData) {
             const msg = eventData.chat[i];
             if (!msg || msg.role !== 'user') continue;
             const txt = String(msg.content || '');
-            if (/\[实时手机指令——/.test(txt)
-                || /Request:\s*\*\*\s*【\s*实时手机指令/.test(txt)
-                || /Request:\s*【实时手机指令/.test(txt)
-                || /Request:\s*\[实时手机指令/.test(txt)) {
+            if (STRICT_MARKER_RE.test(txt)) {
                 isStrictTurn = true;
             }
-            // 检测 image-request：从 OOC 段提取 user 真实输入（"用户发送的短信内容：「X」" 括号里）
-            // OOC 头部含协议元指令，我们要从中提取 user 真正写的话
-            const userTextMatch = txt.match(/用户发送的短信内容[：:]\s*[「「『\[]([\s\S]*?)[」」』\]]/);
-            const userActualText = userTextMatch ? userTextMatch[1] : txt;
-            if (IMAGE_REQUEST_RE.test(userActualText)) {
+            // v0.14.44 audit fix: 原想用 /用户发送的短信内容[：:]\s*「(.+?)」/ 抽 user 真实输入，
+            // 但 makeRequestSafe 把 「」 剥成空格了 → 闭合括号永不命中；JS 无 m flag 时 $ 只匹配整串
+            // 末尾、加上 lazy {1,200}? 也找不到干净边界 → 正则永远 fall-through 到 txt 整段。
+            // 索性直接对 txt 整段做 IMAGE_REQUEST 检测：image keyword（拍照/发图/看看你）只会出现
+            // 在 user 真实文本里；OOC 的 conditional hint（imageHint/countHint/bodyPartHint）本身就是
+            // user 命中关键词时才追加的，自洽不会假阳。
+            if (IMAGE_REQUEST_RE.test(txt)) {
                 isImageRequest = true;
             }
             break; // 只看最后一条 user 消息
@@ -796,13 +803,10 @@ async function onMessageReceived() {
 
     // v0.14.29 STRICT 模式判定：上一条 user 消息含实时手机指令 → AI 这一轮该只输出 PHONE 块
     // 提前计算用于 reasoning-hint 兜底 + 后续 strip 双模式
+    // v0.14.44 audit fix 同 onPromptReady — 兼容 ·（buildPostOOC / buildGroupPostCommandOOC）+ ——（buildSendOOC）
     const _prevUser = idx > 0 ? ctx.chat[idx - 1] : null;
     const _userText = (_prevUser && _prevUser.is_user) ? (_prevUser.mes || '') : '';
-    const isStrictMode =
-        /\[实时手机指令——/.test(_userText) ||
-        /Request:\s*\*\*\s*【\s*实时手机指令/.test(_userText) ||
-        /Request:\s*【实时手机指令/.test(_userText) ||
-        /Request:\s*\[实时手机指令/.test(_userText);
+    const isStrictMode = /实时(?:手机指令|群聊生图指令)[·—]/.test(_userText);
 
     const parsed = Protocol.parsePhoneFromMessage(msg.mes);
     if (!parsed) {
@@ -1311,7 +1315,11 @@ async function handleReroll() {
     if (!currentThread) return;
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
-    const removed = State.popLastNpcBatch(chatId, currentThread);
+    // v0.14.44 群聊路径用 popLastGroupNpcBatch（之前误用 popLastNpcBatch 导致总报"没有可重新生成的消息"）
+    const isGroup = isGroupThread(currentThread);
+    const removed = isGroup
+        ? State.popLastGroupNpcBatch(chatId, currentThread)
+        : State.popLastNpcBatch(chatId, currentThread);
     if (!removed.length) { toastr.warning('没有可重新生成的消息'); return; }
     for (const m of removed) {
         if (m.pic) picUrlCache.delete(m.pic);
@@ -3222,7 +3230,12 @@ async function rerollAsDifferentNpcHandler(name) {
     State.removeStrangerAnchor(chatId, name);
 
     // 3. pop 最后一批 NPC 消息（同 handleReroll 流程）
-    const removed = State.popLastNpcBatch(chatId, currentThread);
+    // v0.14.44 audit fix: 与 handleReroll 对齐 — 群聊路径用 popLastGroupNpcBatch
+    // （🆕chip 当前只在 renderBubble 渲染、不在 renderGroupBubble，但保守加分支防 chip 后续也接入群聊渲染）
+    const isGroup = isGroupThread(currentThread);
+    const removed = isGroup
+        ? State.popLastGroupNpcBatch(chatId, currentThread)
+        : State.popLastNpcBatch(chatId, currentThread);
     if (!removed.length) {
         toastr.warning('没有可撤销的 AI 回复（可能聊天已被手动清理）');
         window.__smartPhone_rerollExcludeNpcs.delete(name);
@@ -3263,24 +3276,26 @@ function openPromoteStrangerPreviewModal(name) {
     modal.className = 'phone-forward-modal';
     const activeBooks = getActiveBookNames();
     const kindLabel = ({ real_origin_female: '写实女', fictional_female: '二次元/古风女', real_origin_male: '写实男', fictional_male: '二次元/古风男' })[sa.kind] || sa.kind;
+    // v0.14.44 用已有的 .phone-forward-card 结构（之前用 .phone-forward-modal-content 等 4 个类名都没 CSS
+    // → 内容溢出手机壳，弹窗里的 pre 不滚动而是把整个 modal 撑高，造成 UI bug 截图里的混乱布局）
     const profileHtml = sa.profile
-        ? `<pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:400px;overflow:auto;background:#f5f5f5;padding:8px;border-radius:4px">${escapeHtml(sa.profile)}</pre>`
+        ? `<pre class="phone-promote-profile-pre">${escapeHtml(sa.profile)}</pre>`
         : '<em>无完整人设档案，仅有外貌 booru</em>';
     modal.innerHTML = `
-        <div class="phone-forward-modal-content" style="max-width:560px">
-            <div class="phone-forward-modal-header">
-                <h3>升级 NPC 为正式联系人</h3>
-                <button class="phone-forward-modal-close">✕</button>
+        <div class="phone-forward-card">
+            <div class="phone-forward-header">
+                <span>升级 NPC 为正式联系人</span>
+                <button class="phone-forward-close" type="button">✕</button>
             </div>
-            <div class="phone-forward-modal-body">
-                <div style="margin-bottom:8px"><b>姓名：</b>${escapeHtml(name)}</div>
-                <div style="margin-bottom:8px"><b>类型：</b>${escapeHtml(kindLabel)}（${escapeHtml(sa.kind || '')}）</div>
-                <div style="margin-bottom:8px"><b>世界书归属：</b>${activeBooks.length ? escapeHtml(activeBooks.join(' / ')) : '<em>无激活世界书</em>'}</div>
-                <div style="margin-bottom:8px"><b>外貌 booru anchor：</b><br>
-                    <code style="display:block;background:#f5f5f5;padding:6px;border-radius:4px;font-size:11px;word-break:break-word">${escapeHtml(sa.core || '<em>未提取</em>')}</code>
+            <div class="phone-forward-body">
+                <div><b>姓名：</b>${escapeHtml(name)}</div>
+                <div><b>类型：</b>${escapeHtml(kindLabel)}（${escapeHtml(sa.kind || '')}）</div>
+                <div><b>世界书归属：</b>${activeBooks.length ? escapeHtml(activeBooks.join(' / ')) : '<em>无激活世界书</em>'}</div>
+                <div><b>外貌 booru anchor：</b>
+                    <code class="phone-promote-booru-code">${escapeHtml(sa.core || '未提取')}</code>
                 </div>
-                <div style="margin-bottom:8px"><b>完整人设：</b>${profileHtml}</div>
-                <p style="font-size:12px;color:#888;margin-top:12px">
+                <div><b>完整人设：</b>${profileHtml}</div>
+                <p class="phone-promote-warn">
                     ⚠ 升级后：
                     <br>· 自动加入当前激活的世界书（${activeBooks.length ? escapeHtml(activeBooks.join(',')) : '无'}）
                     <br>· tempOrigin=true → 不会主动出现在朋友圈/小红书/论坛 fresh feed
@@ -3288,15 +3303,16 @@ function openPromoteStrangerPreviewModal(name) {
                     <br>· 完整人设写入 contact.rawContent，✨ 按钮可重新提取 anchor
                 </p>
             </div>
-            <div class="phone-forward-modal-footer">
-                <button class="phone-btn" id="phone-promote-cancel">取消</button>
-                <button class="phone-btn phone-btn-primary" id="phone-promote-confirm">确认升级</button>
+            <div class="phone-forward-footer">
+                <button class="phone-forward-cancel" id="phone-promote-cancel" type="button">取消</button>
+                <button class="phone-forward-submit" id="phone-promote-confirm" type="button">确认升级</button>
             </div>
         </div>
     `;
     (getModalContainer() || phoneRoot).appendChild(modal);
-    modal.querySelector('.phone-forward-modal-close').addEventListener('click', () => modal.remove());
+    modal.querySelector('.phone-forward-close').addEventListener('click', () => modal.remove());
     modal.querySelector('#phone-promote-cancel').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     modal.querySelector('#phone-promote-confirm').addEventListener('click', () => {
         const ok = State.promoteStrangerToContact(chatId, name, activeBooks);
         if (ok) {
