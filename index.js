@@ -643,6 +643,29 @@ function onPromptReady(eventData) {
         }
     }
 
+    // v0.14.66 ⭐ 还原 chat 历史里 AI 之前发的 PHONE 块原文（msg.mes='📱' 显示给 user，
+    // chat 历史给 AI 看的是 msg.extra.smartPhoneOriginal）。让 AI 知道自己之前回了什么 →
+    // 避免出戏（角色重复说"刚洗完澡"、服装跳变、姿势不连贯等）。
+    if (Array.isArray(eventData.chat)) {
+        const ctxChat = getContext()?.chat || [];
+        // 按时间顺序收集所有 PHONE 块原文（来自 ctx.chat 的 assistant messages）
+        const originals = [];
+        for (const m of ctxChat) {
+            if (!m || m.is_user) continue;
+            if (m.extra?.smartPhoneOriginal) originals.push(m.extra.smartPhoneOriginal);
+        }
+        // 按时间顺序遍历 eventData.chat，替换 assistant content='📱' 的为对应原文
+        let oi = 0;
+        for (const m of eventData.chat) {
+            if (!m || m.role !== 'assistant') continue;
+            if (m.content === '📱' && oi < originals.length) {
+                m.content = originals[oi];
+                oi++;
+            }
+        }
+        if (oi > 0) console.log(`[smart-phone v0.14.66] 还原 ${oi} 条 chat 历史 PHONE 块给 AI 看（防出戏）`);
+    }
+
     const contacts = s.contacts.map((c) => ({ name: c.name, note: c.note }));
     const lore = (s.worldbook?.importedEntries || []).filter((e) => e.type === 'lore' && e.enabled);
 
@@ -791,6 +814,45 @@ function normalizeGroupTimes(groupArr) {
         // 群聊节奏更密，0-3 分钟之内变化（有的连发瞬间）
         minutes += Math.floor(Math.random() * 4);
     }
+}
+
+// v0.14.66 重建 PHONE 块给 AI 历史用 — 仅 prose-fallback 场景
+// 正常 STRICT 回合 msg.mes 已含完整 PHONE 块，直接存原文即可；prose fallback 时
+// AI 写了 prose plugin 合成了 SMS，给 AI 看 prose 会让下回合 AI 学 prose 风格
+// 所以从 parsed 重建干净 PHONE 块给 AI 看
+function _rebuildPhoneBlockFromParsed(parsed) {
+    const lines = [];
+    if (Array.isArray(parsed.sms)) {
+        for (const m of parsed.sms) {
+            const from = (m.from || '').replace(/"/g, '&quot;');
+            const time = (m.time || '').replace(/"/g, '&quot;');
+            const subjAttr = m.subject ? ` SUBJECT="${m.subject.replace(/"/g, '&quot;')}"` : '';
+            const content = (m.content || '').trim();
+            const picTag = m.pic ? ` ${m.pic}` : '';
+            lines.push(`<SMS FROM="${from}" TIME="${time}"${subjAttr}>${content}${picTag}</SMS>`);
+        }
+    }
+    if (Array.isArray(parsed.group)) {
+        for (const m of parsed.group) {
+            const from = (m.from || '').replace(/"/g, '&quot;');
+            const time = (m.time || '').replace(/"/g, '&quot;');
+            const group = (m.group || '').replace(/"/g, '&quot;');
+            const content = (m.content || '').trim();
+            const picTag = m.pic ? ` ${m.pic}` : '';
+            lines.push(`<GMSG FROM="${from}" GROUP="${group}" TIME="${time}">${content}${picTag}</GMSG>`);
+        }
+    }
+    if (Array.isArray(parsed.moments)) {
+        for (const m of parsed.moments) {
+            const from = (m.from || '').replace(/"/g, '&quot;');
+            const time = (m.time || '').replace(/"/g, '&quot;');
+            const content = (m.content || '').trim();
+            const picTag = m.pic ? ` ${m.pic}` : '';
+            lines.push(`<MOMENTS FROM="${from}" TIME="${time}">${content}${picTag}</MOMENTS>`);
+        }
+    }
+    if (!lines.length) return '';
+    return `<PHONE>\n${lines.join('\n')}\n</PHONE>`;
 }
 
 // v0.14.63 回滚到串联模式 — 移除 pre-fire / stream-fire 全部并行架构
@@ -1381,6 +1443,21 @@ async function onMessageReceived() {
                 rerender();
             } catch (err) { console.error('[smart-phone] command-post auto-reply fallback failed:', err); }
         }, 600);
+    }
+
+    // v0.14.66 ⭐ 在 strip 前把 PHONE 块原文存到 msg.extra.smartPhoneOriginal
+    // 让 AI 在下一回合通过 chat 历史看到自己之前回了什么，避免出戏（"先看裙底"前面已经掰开等不连贯）
+    // ST 主聊天框继续显示 '📱'（msg.mes），AI 看到的 chat 历史在 onPromptReady 里被替换回原文
+    if (msg.mes && msg.mes !== '📱' && /<PHONE>|<SMS\b|<GMSG\b|<MOMENTS\b|<XHS_POST\b|<FORUM_POST\b|<NPC_PROFILE\b/i.test(msg.mes)) {
+        if (!msg.extra) msg.extra = {};
+        msg.extra.smartPhoneOriginal = msg.mes;
+    } else if (proseFallbackUsed && parsed) {
+        // prose fallback：从 parsed 重建干净 PHONE 块给 AI 看（避免下回合 AI 学 prose 风格）
+        const rebuilt = _rebuildPhoneBlockFromParsed(parsed);
+        if (rebuilt) {
+            if (!msg.extra) msg.extra = {};
+            msg.extra.smartPhoneOriginal = rebuilt;
+        }
     }
 
     // v0.14.29 双模式 strip 策略：
