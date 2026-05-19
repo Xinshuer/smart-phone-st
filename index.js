@@ -1072,6 +1072,32 @@ async function onMessageReceived() {
         }
     }
 
+    // v0.14.48 ⭐ 自动关联新 NPC_PROFILE 跟同回合的"无 SUBJECT pic SMS"
+    // 场景：AI 介绍新 NPC 时写了 <NPC_PROFILE name="柳寒烟"...> + 一条来自联系人(岳清霜)的 SMS
+    // 含 <pic> 但忘了写 SUBJECT="柳寒烟" → 默认按 FROM=岳清霜 路由 → 图用了 岳清霜 anchor
+    // 修法：找无 subject 且 from != 新 NPC 的 SMS pic，按顺序赋值给同回合的 savedNpcNames
+    if (savedNpcNames.length > 0 && parsed.sms?.length) {
+        const candidates = parsed.sms.filter(s =>
+            s.pic && !s.subject && !savedNpcNames.includes(s.from)
+        );
+        for (let i = 0; i < Math.min(candidates.length, savedNpcNames.length); i++) {
+            candidates[i].subject = savedNpcNames[i];
+            console.log(`[smart-phone v0.14.48] 自动关联 SMS pic → SUBJECT="${savedNpcNames[i]}"（AI 忘写 SUBJECT 时兜底）`);
+        }
+        // 群聊同处理
+        if (parsed.group?.length) {
+            const gcandidates = parsed.group.filter(g =>
+                g.pic && !g.subject && !savedNpcNames.includes(g.from)
+            );
+            // 群聊 candidate 是 fallback 接下一批 — 从 candidates.length 开始
+            const offset = Math.min(candidates.length, savedNpcNames.length);
+            for (let i = 0; i < Math.min(gcandidates.length, savedNpcNames.length - offset); i++) {
+                gcandidates[i].subject = savedNpcNames[offset + i];
+                console.log(`[smart-phone v0.14.48] 自动关联 GMSG pic → SUBJECT="${savedNpcNames[offset + i]}"`);
+            }
+        }
+    }
+
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
     if (parsed.moments?.length) State.appendMoments(chatId, parsed.moments);
     if (parsed.forum?.length) State.appendForum(chatId, parsed.forum);
