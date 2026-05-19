@@ -704,10 +704,26 @@ function onPromptReady(eventData) {
         : [];
     // v0.14.49 双 Pass 加速模式（实验性，settings.imageGen.splitPicGen 控制）
     const splitPicGen = !!s.imageGen?.splitPicGen;
+
+    // v0.14.62 在 onPromptReady 阶段决定 pre-fire 张数 — 注入协议要求 AI 严格输出 N 张 pic
+    // 同时存到 window state 给 onGenerationStarted 复用（不用再做一次 intent 分析）
+    let prefireCount = 0;
+    if (isImageRequest) {
+        const lastUser = eventData.chat?.slice().reverse().find(m => m?.role === 'user');
+        const userTxt = String(lastUser?.content || '');
+        const intent = analyzeUserIntent(userTxt);
+        if (intent.wantsPic && intent.mode === 'normal') {
+            prefireCount = intent.count;
+            window.__smartPhonePrefireIntent = { count: intent.count, sceneHint: intent.sceneHint, userTxt };
+            console.log(`[smart-phone v0.14.62] onPromptReady 决定 pre-fire count=${prefireCount}，注入协议要求 AI 严格输出 ${prefireCount} 张 pic`);
+        }
+    }
+
     const styleRule = Protocol.buildProtocolPrompt({
         contacts, lore, activeGroup, currentModel, includeAVSections, isStrictTurn, isImageRequest,
         rerollExcludeNpcs: rerollExclude,
         splitPicGen,
+        prefireCount,
     });
 
     // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
@@ -839,15 +855,22 @@ async function onGenerationStarted(type) {
         _passTwoState.parallelAvailable = !!(apiCfg.url && apiCfg.key);
     }
 
-    // 启发式判断是否预生成
-    const intent = analyzeUserIntent(userText);
-    if (intent.mode === 'av') {
-        console.log('[smart-phone v0.14.59] AV 多镜头模式 → 跳过 pre-fire（让 stream 兜底 AI 出 STAGE 序列）');
-        return;
-    }
-    if (intent.mode === 'skip' || !intent.wantsPic) {
-        console.log('[smart-phone v0.14.59] user 无图片诉求 → 跳过 pre-fire');
-        return;
+    // v0.14.62 用 onPromptReady 阶段决定的 intent（已注入协议要求 AI 出 N 张 pic）
+    // 这样 plugin 这边 fire N 张 / AI 写 N 张 / alignment 完美 1:1，无孤儿无缺口
+    const stashed = window.__smartPhonePrefireIntent;
+    window.__smartPhonePrefireIntent = null;
+    let intent;
+    if (stashed) {
+        intent = { wantsPic: true, count: stashed.count, mode: 'normal', sceneHint: stashed.sceneHint };
+    } else {
+        // 兼容兜底：onPromptReady 没跑（罕见）→ 当场分析
+        const fb = analyzeUserIntent(userText);
+        if (fb.mode !== 'normal' || !fb.wantsPic) {
+            console.log('[smart-phone v0.14.62] user 无图片诉求 → 跳过 pre-fire');
+            return;
+        }
+        intent = fb;
+        console.warn('[smart-phone v0.14.62] onPromptReady 未注入 intent，走 fallback。协议没注入张数对齐铁律 → 可能有孤儿/缺口');
     }
 
     // 检查 phone-api 配置
@@ -949,15 +972,12 @@ function _firePrefireComfyUI(finalPicTag, picInner, target) {
     console.log(`[smart-phone v0.14.57] ⚡⚡ stream-prefire ComfyUI fire (target=${target}, picTag=${finalPicTag.slice(0, 80)}…)`);
 }
 
-// v0.14.59 流式兜底 — 只在 pre-fire 未启用（AV 模式 / 无 phone-api / 推断失败）时才走
-// 用 stream 期间扫到的 <pic .../> 触发 ComfyUI。pre-fire 在跑时这里直接跳过（避免重复 fire 浪费）。
-// 双路径保留：
-//   (a) <pic prompt="..."/> → 直接 fire ComfyUI
-//   (b) <pic/> 空占位（splitPicGen 模式）→ Pass 2 生成 prompt → fire ComfyUI
+// v0.14.62 流式兜底 — 协议已强制 AI 输出 N 张 pic = pre-fire count，
+// 所以 stream-fire 在 pre-fire active 时直接全屏蔽（pre-fire 的 N 张 alignment 时 1:1 对位）
 async function onStreamToken(accumulatedText) {
     if (typeof accumulatedText !== 'string') return;
     if (!window.smartImageGen?.generateFromPicTag) return;
-    if (_prefireState.active) return; // ⭐ pre-fire 已启动，不走 stream-fire（避免重复）
+    if (_prefireState.active) return; // pre-fire 全权负责，stream-fire 不掺和
     if (accumulatedText.length === _passTwoState.lastBufferLength) return;
     _passTwoState.lastBufferLength = accumulatedText.length;
 
