@@ -18,6 +18,7 @@ import {
 import * as Protocol from './lib/protocol.js';
 import * as State from './lib/state.js';
 import * as WB from './lib/worldbook.js';
+import { generatePicPromptForContext } from './lib/pic-prompt-gen.js';
 import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api.js';
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
@@ -705,9 +706,12 @@ function onPromptReady(eventData) {
     const rerollExclude = (window.__smartPhone_rerollExcludeNpcs && window.__smartPhone_rerollExcludeNpcs.size > 0)
         ? Array.from(window.__smartPhone_rerollExcludeNpcs)
         : [];
+    // v0.14.49 双 Pass 加速模式（实验性，settings.imageGen.splitPicGen 控制）
+    const splitPicGen = !!s.imageGen?.splitPicGen;
     const styleRule = Protocol.buildProtocolPrompt({
         contacts, lore, activeGroup, currentModel, includeAVSections, isStrictTurn, isImageRequest,
         rerollExcludeNpcs: rerollExclude,
+        splitPicGen,
     });
 
     // v0.14.24 单轨化 STEP 2：strip 之后再 push 协议（协议本身免疫被洗）。
@@ -770,6 +774,88 @@ function normalizeGroupTimes(groupArr) {
         groupArr[i].time = formatHHMM(minutes);
         // 群聊节奏更密，0-3 分钟之内变化（有的连发瞬间）
         minutes += Math.floor(Math.random() * 4);
+    }
+}
+
+// v0.14.49 ⭐ Pass 2 — 检测 <pic/> 占位符 + 后台 quiet AI 生成 booru prompt 填回
+// 串行处理（generateQuietPrompt 不并发安全），所以 N 张图慢 N×~1.5s
+// 但 Pass 1 已经省了 N×~30 tokens 输出，整体仍比单 Pass 快
+function isPicPlaceholder(picTag) {
+    return typeof picTag === 'string' && picTag.length > 0 && !/\sprompt\s*=/i.test(picTag);
+}
+
+async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
+    const state = State.load();
+    const sdModel = state.imageGen?.currentModel || 'wai_anihentai';
+
+    // 找全角色 anchor 查表 — 看 subject 优先，回退 from
+    const findAnchor = (targetName) => {
+        if (!targetName) return '';
+        // 联系人 anchor
+        const contact = state.contacts.find(c => c.name === targetName);
+        if (contact?.anchor) {
+            return contact.anchor.sdPrompt || contact.anchor.prompt || '';
+        }
+        // strangerAnchor
+        const sa = State.getStrangerAnchor?.(chatId, targetName);
+        if (sa?.core) return sa.core;
+        return '';
+    };
+
+    // 收集所有需要 Pass 2 的 ref：{ msg, target, smsContent }
+    const placeholderRefs = [];
+    const collectFrom = (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (const m of arr) {
+            if (m.pic && isPicPlaceholder(m.pic)) {
+                placeholderRefs.push({
+                    msg: m,
+                    target: m.subject || m.from || '',
+                    smsContent: m.content || '',
+                });
+            }
+        }
+    };
+    collectFrom(parsed.sms);
+    collectFrom(parsed.group);
+    collectFrom(parsed.moments);
+    // forum/xhs 用 images[] 数组结构不一样，先不接
+
+    if (!placeholderRefs.length) return;
+
+    console.log(`[smart-phone v0.14.49 Pass 2] 发现 ${placeholderRefs.length} 个 <pic/> 占位符，开始生成 prompt`);
+    toastr.info(`⚡ 后台生成 ${placeholderRefs.length} 张图的 prompt…`, '双 Pass 模式', { timeOut: 2500 });
+
+    let success = 0;
+    let failed = 0;
+    for (const ref of placeholderRefs) {
+        try {
+            const anchor = findAnchor(ref.target);
+            const generatedPrompt = await generatePicPromptForContext({
+                targetName: ref.target,
+                smsContent: ref.smsContent,
+                userText,
+                contactAnchor: anchor,
+                currentModel: sdModel,
+            });
+            // 把 <pic/> 改写成 <pic prompt="..."/> — 保留 SUBJECT / SUBJECTS 等其他属性
+            // 转义 prompt 里的 " 字符；其他不必转义（booru tag 是普通 ASCII）
+            const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
+            ref.msg.pic = ref.msg.pic.replace(
+                /<pic\b([^>]*)\/?>/i,
+                `<pic prompt="${safePrompt}"$1/>`,
+            );
+            success++;
+        } catch (err) {
+            console.error('[smart-phone v0.14.49 Pass 2] 单个 pic 生成失败:', err);
+            failed++;
+        }
+    }
+
+    if (failed > 0) {
+        toastr.warning(`Pass 2 完成：${success} 成功 / ${failed} 失败（失败的会用 fallback prompt 出图）`, null, { timeOut: 3000 });
+    } else {
+        toastr.success(`⚡ Pass 2 完成：${success} 张 prompt 生成`, null, { timeOut: 2000 });
     }
 }
 
@@ -1096,6 +1182,12 @@ async function onMessageReceived() {
                 console.log(`[smart-phone v0.14.48] 自动关联 GMSG pic → SUBJECT="${savedNpcNames[offset + i]}"`);
             }
         }
+    }
+
+    // v0.14.49 ⭐ Pass 2 — 检测 <pic/> 占位符 + 后台 quiet AI 生成 booru prompt 填回
+    // 仅在 settings.imageGen.splitPicGen 开启时启用
+    if (s.imageGen?.splitPicGen) {
+        await fillPlaceholderPicsViaPass2(parsed, chatId, _userText);
     }
 
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
