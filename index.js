@@ -808,13 +808,27 @@ async function onMessageReceived() {
     const _userText = (_prevUser && _prevUser.is_user) ? (_prevUser.mes || '') : '';
     const isStrictMode = /实时(?:手机指令|群聊生图指令)[·—]/.test(_userText);
 
-    const parsed = Protocol.parsePhoneFromMessage(msg.mes);
+    // v0.14.46 lenient parser — 3 层尝试（<PHONE> 包裹 → 裸标签 → <PHONE> 截断救援）
+    let parsed = Protocol.parsePhoneFromMessage(msg.mes);
+    let proseFallbackUsed = false;
+
+    // v0.14.46 Prose fallback — lenient parser 抓不到 + STRICT 模式 + 已知收件人时启用
+    // 把 AI 写的散文里第一段对话 / 第一句话合成 SMS 塞进手机 UI，让 ST 主聊天不残留散文
+    if (!parsed && isStrictMode && currentThread && !isGroupThread(currentThread) && msg.mes) {
+        const synthesized = Protocol.synthesizeSmsFromProse(msg.mes, currentThread, Protocol.nowHHMM());
+        if (synthesized) {
+            // 包装成完整 PHONE 块再走标准解析 — 保证 metadata（SUBJECT 等）走同一路径
+            parsed = Protocol.parsePhoneFromMessage(`<PHONE>${synthesized}</PHONE>`);
+            if (parsed) {
+                proseFallbackUsed = true;
+                console.log('[smart-phone v0.14.46] prose fallback：AI 写散文，已合成 SMS：', synthesized);
+            }
+        }
+    }
+
     if (!parsed) {
-        // Bug 3 兜底：模型完全没输出 PHONE 块（只有 reasoning prose / 闲聊），
-        // 检测中文推理特征 → 替换为 📱 占位避免散文污染聊天。
-        // v0.14.29：仅在 STRICT 模式下兜底（user 点了手机 UI 按钮但 AI 输出了思维链而非 PHONE 块）。
-        //          NORMAL 模式下（正常剧情）AI 本就该写 prose，"我需要/首先/让我"等是合法创作语，
-        //          不应误判为思维链污染剧情正文。
+        // Bug 3 兜底：lenient + prose fallback 都失败 → 检测推理特征替换 📱 占位
+        // 仅 STRICT 模式触发（NORMAL 模式 AI 本就该写 prose）
         if (isStrictMode && msg.mes && msg.mes.length > 150) {
             const reasoningHints = [
                 '好的，我', '好的我', '我需要', '首先', '我们来看看', '让我', '用户的任务',
@@ -1140,15 +1154,21 @@ async function onMessageReceived() {
     // v0.14.29 双模式 strip 策略：
     //   STRICT mode（user 点了手机 UI 按钮）→ 整条替换为 📱（PHONE 块已路由到 UI，prose 是泄漏）
     //   NORMAL mode（普通剧情）→ 仅剥 PHONE 块，保留 prose（AI 正常写的剧情）
-    // 这样修复 user 输入"正式开始本次任务"等剧情触发词时 AI 被错误锁进 PHONE-only 模式的问题。
-    const stripped = Protocol.stripPhoneBlock(msg.mes);
-    if (stripped !== msg.mes) {
-        msg.mes = isStrictMode ? '📱' : (stripped || '📱');
+    // v0.14.46 prose fallback 命中时强制走 📱（散文已被合成 SMS 进 UI，不留在 ST 主聊天）
+    // v0.14.46 用 stripAllPhoneTags 替代 stripPhoneBlock — 同时清掉裸标签（lenient parser 路径）
+    const stripped = Protocol.stripAllPhoneTags(msg.mes);
+    if (stripped !== msg.mes || proseFallbackUsed) {
+        msg.mes = (isStrictMode || proseFallbackUsed) ? '📱' : (stripped || '📱');
         try {
             const updateBlock = (await import('../../../../script.js')).updateMessageBlock;
             if (typeof updateBlock === 'function') updateBlock(idx, msg);
         } catch {}
         try { await ctx.saveChat(); } catch {}
+    }
+
+    // v0.14.46 prose fallback 用户提示 — 让 user 知道发生了什么（非阻塞 toast）
+    if (proseFallbackUsed && typeof toastr !== 'undefined') {
+        toastr.info('AI 这次写了散文而不是 PHONE 块，已自动转成短信进手机', null, { timeOut: 3500 });
     }
 
     rerender();
