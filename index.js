@@ -884,6 +884,54 @@ async function onStreamToken(accumulatedText) {
         });
         _passTwoState.pendingPromises.set(smsKey, promise);
         console.log(`[smart-phone v0.14.50] ⚡ stream-detect SMS target=${target}, fire Pass 2 parallel (smsKey=${smsKey.slice(0,40)}…)`);
+
+        // v0.14.55 ⚡⚡⚡ 三 Pass 真并行 — Pass 2 prompt 一就绪立即 fire ComfyUI gen，
+        // 而不是等 onMessageReceived 渲染完才开始。picUrlCache 同步存 Promise，
+        // triggerPicSlots 走相同 key 找到 in-flight Promise → await 而不是重新 fire。
+        // 用户感知：消息渲染时图片 cell 已大概率出现（pre-fire 快于主流）或在 loading（pre-fire 慢于主流）→
+        // 消息+图片同时出现的体验。
+        const capturedPicInner = picInner; // closure 显式 capture（避免 loop var TDZ 误解）
+        const capturedTarget = target;
+        promise.then((booruPrompt) => {
+            if (!booruPrompt) return; // phone-api 失败 → 走 fillPlaceholderPicsViaPass2 fallback
+            if (!window.smartImageGen?.generateFromPicTag) return;
+            // 构造最终 picTag — 必须跟 fillPlaceholderPicsViaPass2 产出完全一致，作 cache key
+            const safePrompt = booruPrompt.replace(/"/g, '&quot;');
+            const finalPicTag = `<pic prompt="${safePrompt}"${capturedPicInner || ''}/>`;
+            if (picUrlCache.has(finalPicTag)) return;
+            // 持久化 cache 命中（user 重发同内容）→ 直接填内存 cache 不重新 fire ComfyUI
+            try {
+                const _ctx = getContext();
+                const _chatId = _ctx?.chatId || 'default';
+                const persisted = State.getPicUrl(_chatId, finalPicTag);
+                if (persisted) {
+                    picUrlCache.set(finalPicTag, persisted);
+                    return;
+                }
+            } catch {}
+            // SUBJECTS 属性（多角色合影）走 generateGroupPicTag 路径
+            const subjectsMatch = capturedPicInner?.match(/SUBJECTS\s*=\s*"([^"]+)"/i);
+            const subjects = subjectsMatch ? subjectsMatch[1].split(',').map(s => s.trim()).filter(Boolean) : [];
+            const useGroupPic = subjects.length > 1 && window.smartImageGen?.generateGroupPicTag;
+            const contacts = State.load().contacts;
+            const hint = { from: capturedTarget, source: 'sms' };
+            const generator = useGroupPic
+                ? () => window.smartImageGen.generateGroupPicTag(finalPicTag, { contacts, subjects, hint })
+                : () => window.smartImageGen.generateFromPicTag(finalPicTag, { contacts, hint });
+            const genPromise = generator()
+                .then((url) => {
+                    picUrlCache.set(finalPicTag, url);
+                    try {
+                        const _ctx2 = getContext();
+                        const _chatId2 = _ctx2?.chatId || 'default';
+                        if (url) State.setPicUrl(_chatId2, finalPicTag, url);
+                    } catch {}
+                    return url;
+                })
+                .catch((err) => { picUrlCache.delete(finalPicTag); throw err; });
+            picUrlCache.set(finalPicTag, genPromise);
+            console.log(`[smart-phone v0.14.55] ⚡⚡⚡ stream-prefire ComfyUI fire (target=${capturedTarget}, picTag=${finalPicTag.slice(0, 80)}…)`);
+        }).catch(() => { /* Pass 2 错误已在 phone-api 端 log */ });
     }
 }
 
