@@ -18,7 +18,7 @@ import {
 import * as Protocol from './lib/protocol.js';
 import * as State from './lib/state.js';
 import * as WB from './lib/worldbook.js';
-import { generatePicPromptForContext } from './lib/pic-prompt-gen.js';
+import { generatePicPromptForContext, generatePicPromptViaPhoneApi } from './lib/pic-prompt-gen.js';
 import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api.js';
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
@@ -612,6 +612,10 @@ function bindEvents() {
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onPromptReady);
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.MESSAGE_UPDATED, onMessageReceived); // re-parse on edits
+    // v0.14.50 双 Pass 真并行：监听流式 token → 检测完整 SMS 块 → 立即用独立 API 通道
+    // 启动 Pass 2，跟 Pass 1 同时跑（callPhoneApi 不阻塞 ST 主流）
+    eventSource.on(event_types.STREAM_TOKEN_RECEIVED, onStreamToken);
+    eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
     eventSource.on(event_types.CHAT_CHANGED, () => {
         currentThread = null;
         if (selectionMode) exitSelectionMode();
@@ -777,6 +781,109 @@ function normalizeGroupTimes(groupArr) {
     }
 }
 
+// v0.14.50 ⭐⭐ 真并行双 Pass — 用 STREAM_TOKEN_RECEIVED 事件 + callPhoneApi 独立通道
+// 实现"两个 agent 同时跑"：Pass 1 流式输出 → 每个完整 <SMS> 块包 <pic/> 立即 fire Pass 2
+// （走 phone-api fetch，跟 ST 主流不阻塞）→ Pass 1 走完时 Pass 2 大都已完成
+const _passTwoState = {
+    activeUserText: '',
+    splitPicGenEnabled: false,
+    parallelAvailable: false, // phone-api 配置好才可用
+    firedSmsKeys: new Set(),   // 已 fire 的 SMS 唯一键去重
+    pendingPromises: new Map(), // smsKey → Promise<prompt>
+    lastBufferLength: 0,
+};
+
+function _resetPassTwoState() {
+    _passTwoState.activeUserText = '';
+    _passTwoState.splitPicGenEnabled = false;
+    _passTwoState.parallelAvailable = false;
+    _passTwoState.firedSmsKeys.clear();
+    _passTwoState.pendingPromises.clear();
+    _passTwoState.lastBufferLength = 0;
+}
+
+function onGenerationStarted(type) {
+    // 新一轮 AI 生成开始 — reset stream-level Pass 2 状态
+    if (window.__smartPhoneInternalQuietCall) return; // plugin 自己发的 quiet 调用不重置
+    _resetPassTwoState();
+    const s = State.load();
+    if (!s.enabled || !s.imageGen?.splitPicGen) return;
+    _passTwoState.splitPicGenEnabled = true;
+    // 检查 phone-api 是否配置可用（决定能否走真并行通道）
+    const apiCfg = s.api || {};
+    _passTwoState.parallelAvailable = !!(apiCfg.url && apiCfg.key);
+    if (_passTwoState.parallelAvailable) {
+        // 拿用户当前回合消息作 Pass 2 context — onPromptReady 时不能拿（chat 数组当时是 prompt 数组）
+        const ctx = getContext();
+        const chat = ctx?.chat || [];
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i].is_user) {
+                _passTwoState.activeUserText = chat[i].mes || '';
+                break;
+            }
+        }
+        console.log('[smart-phone v0.14.50] ⚡⚡ 双 Pass 真并行模式已启用（phone-api 已配置）');
+    } else {
+        console.log('[smart-phone v0.14.50] 双 Pass 加速模式 → fallback 串行（phone-api 未配置）');
+    }
+}
+
+// 流式 token 到达 — 扫 buffer 找新完整 <SMS> 块含 <pic/>，立即 fire Pass 2 并行
+async function onStreamToken(accumulatedText) {
+    if (!_passTwoState.splitPicGenEnabled) return;
+    if (!_passTwoState.parallelAvailable) return; // 没 phone-api 不走 stream 路径
+    if (typeof accumulatedText !== 'string') return;
+    // 只在 buffer 实际增长时扫（节流）
+    if (accumulatedText.length === _passTwoState.lastBufferLength) return;
+    _passTwoState.lastBufferLength = accumulatedText.length;
+
+    // 找完整 <SMS attrs>content</SMS> 单元 — 含 <pic/> 占位符的
+    const smsRe = /<SMS\s+([^>]*?)>([\s\S]*?)<\/SMS>/gi;
+    let m;
+    while ((m = smsRe.exec(accumulatedText)) !== null) {
+        const attrs = m[1];
+        const content = m[2];
+        // 唯一键：attrs + content 前 60 字（避免重复 SMS 误重）
+        const smsKey = attrs.trim() + '|' + content.slice(0, 60);
+        if (_passTwoState.firedSmsKeys.has(smsKey)) continue;
+        // 检测 <pic ... /> 占位符（无 prompt 属性）
+        const picMatch = content.match(/<pic\b([^>]*?)\/?>/i);
+        if (!picMatch) continue;
+        const picInner = picMatch[1] || '';
+        if (/\sprompt\s*=/i.test(picInner)) continue; // AI 已自己写了 prompt 不需要 Pass 2
+
+        _passTwoState.firedSmsKeys.add(smsKey);
+
+        // 提取 target（subject > from）
+        const fromMatch = attrs.match(/FROM\s*=\s*"([^"]+)"/i);
+        const subjectMatch = attrs.match(/SUBJECT\s*=\s*"([^"]+)"/i);
+        const target = (subjectMatch?.[1] || fromMatch?.[1] || '').trim();
+
+        // 查 anchor
+        const state = State.load();
+        const ctxLocal = getContext();
+        const chatId = ctxLocal.chatId || 'default';
+        let anchor = '';
+        const contact = state.contacts.find(c => c.name === target);
+        if (contact?.anchor) anchor = contact.anchor.sdPrompt || contact.anchor.prompt || '';
+        if (!anchor) {
+            const sa = State.getStrangerAnchor?.(chatId, target);
+            if (sa?.core) anchor = sa.core;
+        }
+
+        // ⚡ FIRE Pass 2 并行 — 不 await，让它在后台跑
+        const promise = generatePicPromptViaPhoneApi({
+            targetName: target,
+            smsContent: content,
+            userText: _passTwoState.activeUserText,
+            contactAnchor: anchor,
+            currentModel: state.imageGen?.currentModel || 'wai_anihentai',
+        });
+        _passTwoState.pendingPromises.set(smsKey, promise);
+        console.log(`[smart-phone v0.14.50] ⚡ stream-detect SMS target=${target}, fire Pass 2 parallel`);
+    }
+}
+
 // v0.14.49 ⭐ Pass 2 — 检测 <pic/> 占位符 + 后台 quiet AI 生成 booru prompt 填回
 // 串行处理（generateQuietPrompt 不并发安全），所以 N 张图慢 N×~1.5s
 // 但 Pass 1 已经省了 N×~30 tokens 输出，整体仍比单 Pass 快
@@ -791,27 +898,26 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
     // 找全角色 anchor 查表 — 看 subject 优先，回退 from
     const findAnchor = (targetName) => {
         if (!targetName) return '';
-        // 联系人 anchor
         const contact = state.contacts.find(c => c.name === targetName);
-        if (contact?.anchor) {
-            return contact.anchor.sdPrompt || contact.anchor.prompt || '';
-        }
-        // strangerAnchor
+        if (contact?.anchor) return contact.anchor.sdPrompt || contact.anchor.prompt || '';
         const sa = State.getStrangerAnchor?.(chatId, targetName);
         if (sa?.core) return sa.core;
         return '';
     };
 
-    // 收集所有需要 Pass 2 的 ref：{ msg, target, smsContent }
+    // 收集所有需要 Pass 2 的 ref：{ msg, target, smsContent, smsKey }
     const placeholderRefs = [];
     const collectFrom = (arr) => {
         if (!Array.isArray(arr)) return;
         for (const m of arr) {
             if (m.pic && isPicPlaceholder(m.pic)) {
+                // 用同样的 smsKey 算法跟 stream handler 匹配
+                const smsKey = `FROM="${m.from || ''}"${m.subject ? ` SUBJECT="${m.subject}"` : ''}|${(m.content || '').slice(0, 60)}`;
                 placeholderRefs.push({
                     msg: m,
                     target: m.subject || m.from || '',
                     smsContent: m.content || '',
+                    smsKey, // 不严格匹配 stream 的 key（stream key 含 attrs 原始字符串），仅参考
                 });
             }
         }
@@ -819,43 +925,82 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
     collectFrom(parsed.sms);
     collectFrom(parsed.group);
     collectFrom(parsed.moments);
-    // forum/xhs 用 images[] 数组结构不一样，先不接
 
     if (!placeholderRefs.length) return;
 
-    console.log(`[smart-phone v0.14.49 Pass 2] 发现 ${placeholderRefs.length} 个 <pic/> 占位符，开始生成 prompt`);
-    toastr.info(`⚡ 后台生成 ${placeholderRefs.length} 张图的 prompt…`, '双 Pass 模式', { timeOut: 2500 });
+    const parallelMode = _passTwoState.parallelAvailable && _passTwoState.pendingPromises.size > 0;
+    console.log(`[smart-phone v0.14.50 Pass 2] ${placeholderRefs.length} 个占位符待填，模式=${parallelMode ? '⚡⚡ 并行(stream-fired)' : '串行(post-message)'}`);
+    toastr.info(
+        parallelMode
+            ? `⚡⚡ 并行 Pass 2: 流式期间已 fire ${_passTwoState.pendingPromises.size} 个 prompt 生成`
+            : `⚡ 串行 Pass 2: ${placeholderRefs.length} 张 prompt 后台生成中…`,
+        '双 Pass 模式',
+        { timeOut: 2500 },
+    );
 
     let success = 0;
     let failed = 0;
-    for (const ref of placeholderRefs) {
-        try {
-            const anchor = findAnchor(ref.target);
-            const generatedPrompt = await generatePicPromptForContext({
-                targetName: ref.target,
-                smsContent: ref.smsContent,
-                userText,
-                contactAnchor: anchor,
-                currentModel: sdModel,
-            });
-            // 把 <pic/> 改写成 <pic prompt="..."/> — 保留 SUBJECT / SUBJECTS 等其他属性
-            // 转义 prompt 里的 " 字符；其他不必转义（booru tag 是普通 ASCII）
-            const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
-            ref.msg.pic = ref.msg.pic.replace(
-                /<pic\b([^>]*)\/?>/i,
-                `<pic prompt="${safePrompt}"$1/>`,
-            );
-            success++;
-        } catch (err) {
-            console.error('[smart-phone v0.14.49 Pass 2] 单个 pic 生成失败:', err);
-            failed++;
+
+    if (parallelMode) {
+        // ⚡⚡ 并行模式：stream 期间已 fire 了 Pass 2，这里 await 所有 pending Promises
+        // 然后按 SMS 内容做模糊匹配（stream key vs parsed key 可能略不同）
+        const pendingArr = [..._passTwoState.pendingPromises.entries()];
+        const results = await Promise.allSettled(pendingArr.map(([_, p]) => p));
+        // 按顺序匹配到 placeholderRefs（stream 抓到的顺序跟 parsed 顺序一致）
+        // 没匹配上的 ref 走 fallback 兜底
+        const promptsByOrder = results.map(r => r.status === 'fulfilled' ? r.value : null);
+        for (let i = 0; i < placeholderRefs.length; i++) {
+            const ref = placeholderRefs[i];
+            let generatedPrompt = promptsByOrder[i] || null;
+            if (!generatedPrompt) {
+                // 走 fallback — 串行调一次
+                try {
+                    generatedPrompt = await generatePicPromptForContext({
+                        targetName: ref.target,
+                        smsContent: ref.smsContent,
+                        userText,
+                        contactAnchor: findAnchor(ref.target),
+                        currentModel: sdModel,
+                    });
+                } catch {}
+            }
+            if (generatedPrompt) {
+                const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
+                ref.msg.pic = ref.msg.pic.replace(/<pic\b([^>]*)\/?>/i, `<pic prompt="${safePrompt}"$1/>`);
+                success++;
+            } else {
+                failed++;
+            }
+        }
+    } else {
+        // 串行模式（phone-api 没配 / stream 没触发）
+        for (const ref of placeholderRefs) {
+            try {
+                const anchor = findAnchor(ref.target);
+                const generatedPrompt = await generatePicPromptForContext({
+                    targetName: ref.target,
+                    smsContent: ref.smsContent,
+                    userText,
+                    contactAnchor: anchor,
+                    currentModel: sdModel,
+                });
+                const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
+                ref.msg.pic = ref.msg.pic.replace(/<pic\b([^>]*)\/?>/i, `<pic prompt="${safePrompt}"$1/>`);
+                success++;
+            } catch (err) {
+                console.error('[smart-phone v0.14.50 Pass 2] 单个 pic 失败:', err);
+                failed++;
+            }
         }
     }
 
+    // Reset stream state for next message
+    _resetPassTwoState();
+
     if (failed > 0) {
-        toastr.warning(`Pass 2 完成：${success} 成功 / ${failed} 失败（失败的会用 fallback prompt 出图）`, null, { timeOut: 3000 });
+        toastr.warning(`Pass 2 完成：${success} 成功 / ${failed} 失败`, null, { timeOut: 3000 });
     } else {
-        toastr.success(`⚡ Pass 2 完成：${success} 张 prompt 生成`, null, { timeOut: 2000 });
+        toastr.success(`⚡ Pass 2 完成：${success} 张 prompt（${parallelMode ? '并行' : '串行'}）`, null, { timeOut: 2000 });
     }
 }
 
