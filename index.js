@@ -843,8 +843,11 @@ async function onStreamToken(accumulatedText) {
     while ((m = smsRe.exec(accumulatedText)) !== null) {
         const attrs = m[1];
         const content = m[2];
-        // 唯一键：attrs + content 前 60 字（避免重复 SMS 误重）
-        const smsKey = attrs.trim() + '|' + content.slice(0, 60);
+        // v0.14.51 audit fix Bug 1：smsKey 改用 content text 部分（剥 pic 标签后）作 key
+        // 跟 parser 端 m.content 对齐 — 因为 parser 把 <pic> 单独抽出来 m.content 不含 pic 标签
+        // 这样 stream 端跟 onMessageReceived 端能严格 key 匹配，不再靠 index 顺序对位
+        const contentTextOnly = content.replace(/<pic\b[^>]*\/?>/gi, '').trim();
+        const smsKey = contentTextOnly.slice(0, 80); // 80 字头作 key，碰撞概率极低
         if (_passTwoState.firedSmsKeys.has(smsKey)) continue;
         // 检测 <pic ... /> 占位符（无 prompt 属性）
         const picMatch = content.match(/<pic\b([^>]*?)\/?>/i);
@@ -880,7 +883,7 @@ async function onStreamToken(accumulatedText) {
             currentModel: state.imageGen?.currentModel || 'wai_anihentai',
         });
         _passTwoState.pendingPromises.set(smsKey, promise);
-        console.log(`[smart-phone v0.14.50] ⚡ stream-detect SMS target=${target}, fire Pass 2 parallel`);
+        console.log(`[smart-phone v0.14.50] ⚡ stream-detect SMS target=${target}, fire Pass 2 parallel (smsKey=${smsKey.slice(0,40)}…)`);
     }
 }
 
@@ -906,18 +909,20 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
     };
 
     // 收集所有需要 Pass 2 的 ref：{ msg, target, smsContent, smsKey }
+    // v0.14.51 audit fix Bug 1：smsKey 跟 stream 端用同算法 — content text only (no pic tag) [0:80]
     const placeholderRefs = [];
     const collectFrom = (arr) => {
         if (!Array.isArray(arr)) return;
         for (const m of arr) {
             if (m.pic && isPicPlaceholder(m.pic)) {
-                // 用同样的 smsKey 算法跟 stream handler 匹配
-                const smsKey = `FROM="${m.from || ''}"${m.subject ? ` SUBJECT="${m.subject}"` : ''}|${(m.content || '').slice(0, 60)}`;
+                // parser 端 m.content 已是不含 <pic> 标签的纯文本，跟 stream 端 strip 后对齐
+                const contentTextOnly = (m.content || '').trim();
+                const smsKey = contentTextOnly.slice(0, 80);
                 placeholderRefs.push({
                     msg: m,
                     target: m.subject || m.from || '',
                     smsContent: m.content || '',
-                    smsKey, // 不严格匹配 stream 的 key（stream key 含 attrs 原始字符串），仅参考
+                    smsKey,
                 });
             }
         }
@@ -943,17 +948,21 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
 
     if (parallelMode) {
         // ⚡⚡ 并行模式：stream 期间已 fire 了 Pass 2，这里 await 所有 pending Promises
-        // 然后按 SMS 内容做模糊匹配（stream key vs parsed key 可能略不同）
-        const pendingArr = [..._passTwoState.pendingPromises.entries()];
-        const results = await Promise.allSettled(pendingArr.map(([_, p]) => p));
-        // 按顺序匹配到 placeholderRefs（stream 抓到的顺序跟 parsed 顺序一致）
-        // 没匹配上的 ref 走 fallback 兜底
-        const promptsByOrder = results.map(r => r.status === 'fulfilled' ? r.value : null);
-        for (let i = 0; i < placeholderRefs.length; i++) {
-            const ref = placeholderRefs[i];
-            let generatedPrompt = promptsByOrder[i] || null;
+        // v0.14.51 audit fix Bug 1：用 smsKey 严格匹配（content-based），不再按 index 对位
+        // 不匹配的 ref 走 fallback 串行 — 防止顺序错配导致 prompt 串到错误 SMS
+        const pendingEntries = [..._passTwoState.pendingPromises.entries()];
+        const resolvedByKey = new Map();
+        const resolvedResults = await Promise.allSettled(pendingEntries.map(([_, p]) => p));
+        for (let i = 0; i < pendingEntries.length; i++) {
+            const [key] = pendingEntries[i];
+            const r = resolvedResults[i];
+            if (r.status === 'fulfilled' && r.value) resolvedByKey.set(key, r.value);
+        }
+        for (const ref of placeholderRefs) {
+            let generatedPrompt = resolvedByKey.get(ref.smsKey) || null;
             if (!generatedPrompt) {
-                // 走 fallback — 串行调一次
+                // stream 没抓到（截断/正则没命中）→ fallback 串行
+                console.log(`[smart-phone v0.14.51] smsKey "${ref.smsKey.slice(0,40)}…" 没在 pending 里，走 fallback 串行`);
                 try {
                     generatedPrompt = await generatePicPromptForContext({
                         targetName: ref.target,
@@ -966,7 +975,12 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
             }
             if (generatedPrompt) {
                 const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
-                ref.msg.pic = ref.msg.pic.replace(/<pic\b([^>]*)\/?>/i, `<pic prompt="${safePrompt}"$1/>`);
+                // v0.14.51 audit fix Bug 2：用 replacer function，避免 prompt 含 $ 字符被
+                // .replace 当 backref 处理（如 $1/$2 会被替换成捕获组内容 → 出 bug）
+                ref.msg.pic = ref.msg.pic.replace(
+                    /<pic\b([^>]*)\/?>/i,
+                    (_match, p1) => `<pic prompt="${safePrompt}"${p1 || ''}/>`,
+                );
                 success++;
             } else {
                 failed++;
@@ -985,7 +999,11 @@ async function fillPlaceholderPicsViaPass2(parsed, chatId, userText) {
                     currentModel: sdModel,
                 });
                 const safePrompt = generatedPrompt.replace(/"/g, '&quot;');
-                ref.msg.pic = ref.msg.pic.replace(/<pic\b([^>]*)\/?>/i, `<pic prompt="${safePrompt}"$1/>`);
+                // v0.14.51 audit fix Bug 2：用 replacer function 防 prompt 含 $ 被当 backref
+                ref.msg.pic = ref.msg.pic.replace(
+                    /<pic\b([^>]*)\/?>/i,
+                    (_match, p1) => `<pic prompt="${safePrompt}"${p1 || ''}/>`,
+                );
                 success++;
             } catch (err) {
                 console.error('[smart-phone v0.14.50 Pass 2] 单个 pic 失败:', err);
