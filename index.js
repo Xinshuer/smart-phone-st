@@ -682,31 +682,22 @@ function onPromptReady(eventData) {
     // v0.14.44 audit fix: 协议里 3 个 OOC builder 用了 2 种分隔符（buildSendOOC 用 ——；
     //   buildPostOOC + buildGroupPostCommandOOC 用 ·），且 buildGroupPostCommandOOC 的 marker
     //   词是 "实时群聊生图指令" 不是 "实时手机指令"。需同时覆盖 3 种变体。
-    const STRICT_MARKER_RE = /实时(?:手机指令|群聊生图指令)[·—]/;
+    // v0.14.60 NORMAL 模式已废除 — 永远 STRICT。只判 isImageRequest（决定是否注入 pic 段）
     const IMAGE_REQUEST_RE = /(照片|相片|图片|图像|拍照|拍张|拍个|拍组|拍.{0,5}张|拍.{0,5}相|拍腿|拍奶|拍胸|拍屁股|拍小穴|拍逼|拍阴|拍脚|拍脸|拍全身|拍背|拍脖|拍肩|拍腰|拍上半身|拍下半身|发图|发照|发张|发一张|发几张|发个图|发一组|发自拍|发个|发组|看看你|看看她|看看妈|看看姐|看看你的|看看她的|看看妈的|看看姐的|给我看|让我看|让.{1,3}看|让大家看|让他们看|让他看|让她看|自拍|穿搭|镜子前|视频|录像|直播|走光|露(?:点|奶|逼|穴|胸|屁股)|脱.{0,3}拍|脱了发|show me|selfie)/i;
-    let isStrictTurn = false;
+    const isStrictTurn = true; // 永远 STRICT — buildProtocolPrompt 兼容性保留
     let isImageRequest = false;
     if (Array.isArray(eventData.chat)) {
         for (let i = eventData.chat.length - 1; i >= 0; i--) {
             const msg = eventData.chat[i];
             if (!msg || msg.role !== 'user') continue;
             const txt = String(msg.content || '');
-            if (STRICT_MARKER_RE.test(txt)) {
-                isStrictTurn = true;
-            }
-            // v0.14.44 audit fix: 原想用 /用户发送的短信内容[：:]\s*「(.+?)」/ 抽 user 真实输入，
-            // 但 makeRequestSafe 把 「」 剥成空格了 → 闭合括号永不命中；JS 无 m flag 时 $ 只匹配整串
-            // 末尾、加上 lazy {1,200}? 也找不到干净边界 → 正则永远 fall-through 到 txt 整段。
-            // 索性直接对 txt 整段做 IMAGE_REQUEST 检测：image keyword（拍照/发图/看看你）只会出现
-            // 在 user 真实文本里；OOC 的 conditional hint（imageHint/countHint/bodyPartHint）本身就是
-            // user 命中关键词时才追加的，自洽不会假阳。
             if (IMAGE_REQUEST_RE.test(txt)) {
                 isImageRequest = true;
             }
             break; // 只看最后一条 user 消息
         }
     }
-    const includeAVSections = isStrictTurn && isImageRequest;
+    const includeAVSections = isImageRequest;
     // v0.14.43 NPC 排除名单（user 点 🎲 换 NPC 后注入）
     const rerollExclude = (window.__smartPhone_rerollExcludeNpcs && window.__smartPhone_rerollExcludeNpcs.size > 0)
         ? Array.from(window.__smartPhone_rerollExcludeNpcs)
@@ -1214,7 +1205,9 @@ async function onMessageReceived() {
     // v0.14.44 audit fix 同 onPromptReady — 兼容 ·（buildPostOOC / buildGroupPostCommandOOC）+ ——（buildSendOOC）
     const _prevUser = idx > 0 ? ctx.chat[idx - 1] : null;
     const _userText = (_prevUser && _prevUser.is_user) ? (_prevUser.mes || '') : '';
-    const isStrictMode = /实时(?:手机指令|群聊生图指令)[·—]/.test(_userText);
+    // v0.14.60 NORMAL 模式已废除 — 每一回合都是 STRICT，prose 永远不应该漏到 ST 主聊天
+    // 所以 prose fallback / reasoning-hint 兜底 / 占位替换全部无条件启用
+    const isStrictMode = true;
 
     // v0.14.46 lenient parser — 3 层尝试（<PHONE> 包裹 → 裸标签 → <PHONE> 截断救援）
     let parsed = Protocol.parsePhoneFromMessage(msg.mes);
@@ -1236,7 +1229,7 @@ async function onMessageReceived() {
 
     if (!parsed) {
         // Bug 3 兜底：lenient + prose fallback 都失败 → 检测推理特征替换 📱 占位
-        // 仅 STRICT 模式触发（NORMAL 模式 AI 本就该写 prose）
+        // v0.14.60 永远 STRICT，所以这条永远启用
         if (isStrictMode && msg.mes && msg.mes.length > 150) {
             const reasoningHints = [
                 '好的，我', '好的我', '我需要', '首先', '我们来看看', '让我', '用户的任务',
