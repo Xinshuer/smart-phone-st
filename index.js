@@ -19,6 +19,7 @@ import * as Protocol from './lib/protocol.js';
 import * as State from './lib/state.js';
 import * as WB from './lib/worldbook.js';
 import { generatePicPromptForContext, generatePicPromptViaPhoneApi } from './lib/pic-prompt-gen.js';
+import { analyzeUserIntent, inferTarget, prefirePics } from './lib/pre-fire.js';
 import { testPhoneApi, fetchProviderModels, callPhoneApi } from './lib/phone-api.js';
 import { generateStrangerComments, generateFreshFeed } from './lib/xhs-api.js';
 import { generateFreshPosts, generatePostReplies } from './lib/forum-api.js';
@@ -781,15 +782,31 @@ function normalizeGroupTimes(groupArr) {
     }
 }
 
-// v0.14.50 ⭐⭐ 真并行双 Pass — 用 STREAM_TOKEN_RECEIVED 事件 + callPhoneApi 独立通道
-// 实现"两个 agent 同时跑"：Pass 1 流式输出 → 每个完整 <SMS> 块包 <pic/> 立即 fire Pass 2
-// （走 phone-api fetch，跟 ST 主流不阻塞）→ Pass 1 走完时 Pass 2 大都已完成
+// v0.14.59 ⭐⭐⭐ 真正并行 — 跟主 AI thinking 完全并行的图片预生成
+// GENERATION_STARTED 时不等 AI，立即用 user 文本启动 phone-api 生成 prompt + fire ComfyUI
+// onMessageReceived 时按 AI 写的 pic 顺序把 prefired URLs 写入 picUrlCache
+const _prefireState = {
+    active: false,           // 本回合是否预生成
+    userMsgIdx: -1,          // 哪条 user 消息触发的（防重）
+    urlPromises: [],         // ComfyUI Promise<URL>[] 列表
+    target: '',              // 角色名
+};
+
+function _resetPrefireState() {
+    _prefireState.active = false;
+    _prefireState.userMsgIdx = -1;
+    _prefireState.urlPromises = [];
+    _prefireState.target = '';
+}
+
+// v0.14.50 双 Pass stream-fire 状态（保留作 AV 多镜头兜底）
+// 当用户消息含 AV 关键词（pre-fire 跳过），stream 期间扫到 <pic .../> 才 fire
 const _passTwoState = {
     activeUserText: '',
     splitPicGenEnabled: false,
-    parallelAvailable: false, // phone-api 配置好才可用
-    firedSmsKeys: new Set(),   // 已 fire 的 SMS 唯一键去重
-    pendingPromises: new Map(), // smsKey → Promise<prompt>
+    parallelAvailable: false,
+    firedSmsKeys: new Set(),
+    pendingPromises: new Map(),
     lastBufferLength: 0,
 };
 
@@ -802,31 +819,103 @@ function _resetPassTwoState() {
     _passTwoState.lastBufferLength = 0;
 }
 
-function onGenerationStarted(type) {
-    // 新一轮 AI 生成开始 — reset stream-level pre-fire 状态
-    if (window.__smartPhoneInternalQuietCall) return; // plugin 自己发的 quiet 调用不重置
+async function onGenerationStarted(type) {
+    if (window.__smartPhoneInternalQuietCall) return;
     _resetPassTwoState();
+    _resetPrefireState();
     const s = State.load();
     if (!s.enabled) return;
-    // v0.14.57 路径 A（AI 写完整 prompt → 直接 fire ComfyUI）总是可用，不依赖 splitPicGen
-    // 路径 B（splitPicGen 模式下的 <pic/> 占位符）需要额外配置
+
+    // 拿当前回合 user 文本
+    const ctx = getContext();
+    const chat = ctx?.chat || [];
+    let userText = '';
+    let userMsgIdx = -1;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i].is_user) {
+            userText = chat[i].mes || '';
+            userMsgIdx = i;
+            break;
+        }
+    }
+    if (!userText) return;
+
+    // 旧 stream-fire 状态填充（作 AV 兜底用）
+    _passTwoState.activeUserText = userText;
     if (s.imageGen?.splitPicGen) {
         _passTwoState.splitPicGenEnabled = true;
         const apiCfg = s.api || {};
         _passTwoState.parallelAvailable = !!(apiCfg.url && apiCfg.key);
-        // 拿 user 当前回合消息作 Pass 2 context
-        const ctx = getContext();
-        const chat = ctx?.chat || [];
-        for (let i = chat.length - 1; i >= 0; i--) {
-            if (chat[i].is_user) {
-                _passTwoState.activeUserText = chat[i].mes || '';
-                break;
-            }
-        }
-        console.log(`[smart-phone v0.14.57] splitPicGen 模式启动（phone-api ${_passTwoState.parallelAvailable ? '✅' : '❌'}）`);
-    } else {
-        console.log('[smart-phone v0.14.57] stream-prefire 模式启动（路径 A：直接 fire ComfyUI）');
     }
+
+    // 启发式判断是否预生成
+    const intent = analyzeUserIntent(userText);
+    if (intent.mode === 'av') {
+        console.log('[smart-phone v0.14.59] AV 多镜头模式 → 跳过 pre-fire（让 stream 兜底 AI 出 STAGE 序列）');
+        return;
+    }
+    if (intent.mode === 'skip' || !intent.wantsPic) {
+        console.log('[smart-phone v0.14.59] user 无图片诉求 → 跳过 pre-fire');
+        return;
+    }
+
+    // 检查 phone-api 配置
+    const apiCfg = s.api || {};
+    if (!apiCfg.url || !apiCfg.key) {
+        console.log('[smart-phone v0.14.59] phone-api 未配置 → 跳过 pre-fire（回退到 stream-fire）');
+        return;
+    }
+    if (!window.smartImageGen?.generateFromPicTag) {
+        console.log('[smart-phone v0.14.59] smart-image-gen 不可用 → 跳过 pre-fire');
+        return;
+    }
+
+    // 推断角色 + anchor
+    const target = inferTarget({
+        chatId: ctx.chatId || 'default',
+        currentThread,
+        isGroupThread,
+        userText,
+        contacts: s.contacts || [],
+        getActiveGroups: State.getActiveGroups,
+        findGroup: State.findGroup,
+    });
+    if (!target) {
+        console.log('[smart-phone v0.14.59] 无法推断 target → 跳过 pre-fire');
+        return;
+    }
+    let anchor = '';
+    const contact = (s.contacts || []).find(c => c.name === target);
+    if (contact?.anchor) anchor = contact.anchor.sdPrompt || contact.anchor.prompt || '';
+    if (!anchor) {
+        const sa = State.getStrangerAnchor?.(ctx.chatId || 'default', target);
+        if (sa?.core) anchor = sa.core;
+    }
+
+    // ⚡⚡⚡ 启动预生成（不 await，让它跟主 AI thinking 并行）
+    _prefireState.active = true;
+    _prefireState.userMsgIdx = userMsgIdx;
+    _prefireState.target = target;
+    console.log(`[smart-phone v0.14.59] ⚡⚡⚡ pre-fire 启动 (target=${target}, count=${intent.count}, scene=${intent.sceneHint || '通用'})`);
+
+    // 注意：prefirePics 内部串行调 phone-api（每个 prompt 一个），并行 fire ComfyUI
+    // 用 .then 立即把 Promise<URL>[] 存到状态，不 await
+    prefirePics({
+        userText,
+        target,
+        anchor,
+        count: intent.count,
+        sceneHint: intent.sceneHint,
+        currentModel: s.imageGen?.currentModel || 'wai_anihentai',
+        smartImageGen: window.smartImageGen,
+        contacts: s.contacts || [],
+    }).then(urlPromises => {
+        _prefireState.urlPromises = urlPromises;
+        console.log(`[smart-phone v0.14.59] pre-fire prompts 全部就绪，${urlPromises.length} 个 ComfyUI Promise 已 fire`);
+    }).catch(err => {
+        console.warn('[smart-phone v0.14.59] pre-fire 启动失败:', err);
+        _prefireState.active = false;
+    });
 }
 
 // v0.14.57 共享辅助 — fire ComfyUI 出图，存 Promise 到 picUrlCache 让 triggerPicSlots 复用
@@ -869,14 +958,15 @@ function _firePrefireComfyUI(finalPicTag, picInner, target) {
     console.log(`[smart-phone v0.14.57] ⚡⚡ stream-prefire ComfyUI fire (target=${target}, picTag=${finalPicTag.slice(0, 80)}…)`);
 }
 
-// v0.14.58 流式 token 到达 — 关键改动：以 <pic .../> 本身为触发点（不等 </SMS>），
-// 这样 pic 一写完立即 fire ComfyUI，最大化并行窗口。
-// 双路径：
-//   (a) <pic prompt="..."/> → 直接 fire ComfyUI（默认/最稳）
+// v0.14.59 流式兜底 — 只在 pre-fire 未启用（AV 模式 / 无 phone-api / 推断失败）时才走
+// 用 stream 期间扫到的 <pic .../> 触发 ComfyUI。pre-fire 在跑时这里直接跳过（避免重复 fire 浪费）。
+// 双路径保留：
+//   (a) <pic prompt="..."/> → 直接 fire ComfyUI
 //   (b) <pic/> 空占位（splitPicGen 模式）→ Pass 2 生成 prompt → fire ComfyUI
 async function onStreamToken(accumulatedText) {
     if (typeof accumulatedText !== 'string') return;
     if (!window.smartImageGen?.generateFromPicTag) return;
+    if (_prefireState.active) return; // ⭐ pre-fire 已启动，不走 stream-fire（避免重复）
     if (accumulatedText.length === _passTwoState.lastBufferLength) return;
     _passTwoState.lastBufferLength = accumulatedText.length;
 
@@ -1420,6 +1510,44 @@ async function onMessageReceived() {
     // 仅在 settings.imageGen.splitPicGen 开启时启用
     if (s.imageGen?.splitPicGen) {
         await fillPlaceholderPicsViaPass2(parsed, chatId, _userText);
+    }
+
+    // v0.14.59 ⭐⭐⭐ pre-fire 对齐 — 把 GENERATION_STARTED 时启动的 ComfyUI Promise<URL>
+    // 按 AI 写的 pic 顺序写入 picUrlCache[picTag]。render 时 triggerPicSlots 读 slot.dataset.pic
+    // → 同 key cache 命中 → 直接 await Promise（已 resolved 就秒出图）
+    if (_prefireState.active && _prefireState.urlPromises.length > 0) {
+        const picRefs = [];
+        const collectPic = (arr) => {
+            if (!Array.isArray(arr)) return;
+            for (const m of arr) {
+                if (m.pic && typeof m.pic === 'string') picRefs.push(m);
+            }
+        };
+        collectPic(parsed.sms);
+        collectPic(parsed.group);
+        collectPic(parsed.moments);
+        const alignCount = Math.min(picRefs.length, _prefireState.urlPromises.length);
+        for (let i = 0; i < alignCount; i++) {
+            const ref = picRefs[i];
+            const urlPromise = _prefireState.urlPromises[i];
+            if (!ref.pic || !urlPromise) continue;
+            // 把 Promise<URL> 存进 cache。triggerPicSlots line 3177 会 await 同一 Promise
+            // 不重复 fire ComfyUI。.then 链同步在 cache 里把 Promise 替换成 URL（持久化也走那儿）
+            picUrlCache.set(ref.pic, urlPromise);
+            const picTagForClosure = ref.pic;
+            urlPromise.then((url) => {
+                if (!url) {
+                    picUrlCache.delete(picTagForClosure);
+                    return;
+                }
+                picUrlCache.set(picTagForClosure, url);
+                try {
+                    if (url) State.setPicUrl(chatId, picTagForClosure, url);
+                } catch {}
+            }).catch(() => { picUrlCache.delete(picTagForClosure); });
+        }
+        console.log(`[smart-phone v0.14.59] pre-fire 对齐：${alignCount}/${picRefs.length} 张图复用预生成结果，${picRefs.length - alignCount} 张走 fallback`);
+        // 多余的 prefired Promise 丢弃（_resetPrefireState 在下一回合 GENERATION_STARTED 触发）
     }
 
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
