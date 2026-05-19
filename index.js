@@ -869,33 +869,40 @@ function _firePrefireComfyUI(finalPicTag, picInner, target) {
     console.log(`[smart-phone v0.14.57] ⚡⚡ stream-prefire ComfyUI fire (target=${target}, picTag=${finalPicTag.slice(0, 80)}…)`);
 }
 
-// 流式 token 到达 — 扫 buffer 找新完整 <SMS> 块含 <pic ...>，立即 fire ComfyUI 并行
-// v0.14.57 双路径：
-//   (a) AI 写了完整 <pic prompt="..."/> → 直接 fire ComfyUI（不走 Pass 2，最稳路径）
-//   (b) AI 写了空 <pic/>（仅当 splitPicGen 启用时）→ 先 fire Pass 2 生成 prompt → 再 fire ComfyUI
+// v0.14.58 流式 token 到达 — 关键改动：以 <pic .../> 本身为触发点（不等 </SMS>），
+// 这样 pic 一写完立即 fire ComfyUI，最大化并行窗口。
+// 双路径：
+//   (a) <pic prompt="..."/> → 直接 fire ComfyUI（默认/最稳）
+//   (b) <pic/> 空占位（splitPicGen 模式）→ Pass 2 生成 prompt → fire ComfyUI
 async function onStreamToken(accumulatedText) {
     if (typeof accumulatedText !== 'string') return;
-    if (!window.smartImageGen?.generateFromPicTag) return; // 没 image-gen 扩展不走 stream 路径
-    // 只在 buffer 实际增长时扫（节流）
+    if (!window.smartImageGen?.generateFromPicTag) return;
     if (accumulatedText.length === _passTwoState.lastBufferLength) return;
     _passTwoState.lastBufferLength = accumulatedText.length;
 
-    // 找完整 <SMS attrs>content</SMS> 单元
-    const smsRe = /<SMS\s+([^>]*?)>([\s\S]*?)<\/SMS>/gi;
-    let m;
-    while ((m = smsRe.exec(accumulatedText)) !== null) {
-        const attrs = m[1];
-        const content = m[2];
-        const contentTextOnly = content.replace(/<pic\b[^>]*\/?>/gi, '').trim();
-        const smsKey = contentTextOnly.slice(0, 80);
-        if (_passTwoState.firedSmsKeys.has(smsKey)) continue;
-        // 完整 pic 标签（包括属性）— 用于直接 fire 路径作 cache key
-        const picMatch = content.match(/<pic\b([^>]*?)\/?>/i);
-        if (!picMatch) continue;
-        const picInner = picMatch[1] || '';
-        const fullPicTag = picMatch[0]; // 完整 <pic .../> 字符串
+    // 直接扫完整 <pic .../> 标签 — 不等 </SMS>，pic 一闭合就触发
+    const picRe = /<pic\b([^>]*?)\/>/gi;
+    let pm;
+    while ((pm = picRe.exec(accumulatedText)) !== null) {
+        const fullPicTag = pm[0];
+        const picInner = pm[1] || '';
+        const picStartIdx = pm.index;
+        // 去重 key — 用完整 picTag（含 prompt 内容）作 key，同 picTag 重复出现不重 fire
+        const dedupeKey = fullPicTag;
+        if (_passTwoState.firedSmsKeys.has(dedupeKey)) continue;
 
-        // 提取 target（subject > from）
+        // 找最近一个 <SMS|GMSG attrs> 开标签作 target 来源 — 从 picStartIdx 倒着找
+        const beforePic = accumulatedText.slice(0, picStartIdx);
+        // 倒查最近的 SMS 或 GMSG 开标签（含 attrs）
+        let attrs = '';
+        const lastSmsOpen = beforePic.lastIndexOf('<SMS');
+        const lastGmsgOpen = beforePic.lastIndexOf('<GMSG');
+        const lastOpen = Math.max(lastSmsOpen, lastGmsgOpen);
+        if (lastOpen >= 0) {
+            const tail = beforePic.slice(lastOpen);
+            const openTagMatch = tail.match(/^<(?:SMS|GMSG)\s+([^>]*)>/i);
+            if (openTagMatch) attrs = openTagMatch[1];
+        }
         const fromMatch = attrs.match(/FROM\s*=\s*"([^"]+)"/i);
         const subjectMatch = attrs.match(/SUBJECT\s*=\s*"([^"]+)"/i);
         const target = (subjectMatch?.[1] || fromMatch?.[1] || '').trim();
@@ -903,13 +910,13 @@ async function onStreamToken(accumulatedText) {
         const hasPrompt = /\sprompt\s*=/i.test(picInner);
 
         if (hasPrompt) {
-            // ===== 路径 A：AI 写了完整 prompt → 直接 fire ComfyUI =====
-            // 这是最高频路径（无 splitPicGen 时永远走这里），完全不依赖 phone-api
-            _passTwoState.firedSmsKeys.add(smsKey);
+            // 路径 A：AI 写完整 prompt → 直接 fire ComfyUI
+            _passTwoState.firedSmsKeys.add(dedupeKey);
+            console.log(`[smart-phone v0.14.58] ⚡⚡ pic 写完立即 fire ComfyUI (target=${target})`);
             _firePrefireComfyUI(fullPicTag, picInner, target);
         } else if (_passTwoState.splitPicGenEnabled && _passTwoState.parallelAvailable) {
-            // ===== 路径 B：AI 写了空 <pic/>（splitPicGen 模式）→ Pass 2 生成 prompt → fire ComfyUI =====
-            _passTwoState.firedSmsKeys.add(smsKey);
+            // 路径 B：空 <pic/>（splitPicGen 模式）→ Pass 2 生成 prompt → fire ComfyUI
+            _passTwoState.firedSmsKeys.add(dedupeKey);
             const state = State.load();
             const ctxLocal = getContext();
             const chatId = ctxLocal.chatId || 'default';
@@ -920,15 +927,23 @@ async function onStreamToken(accumulatedText) {
                 const sa = State.getStrangerAnchor?.(chatId, target);
                 if (sa?.core) anchor = sa.core;
             }
+            // SMS content 上下文 — 从 picStartIdx 之前的 SMS 开标签起取内容（如有）
+            let smsContent = '';
+            if (lastSmsOpen >= 0) {
+                const sliceFrom = beforePic.indexOf('>', lastSmsOpen);
+                if (sliceFrom >= 0) smsContent = beforePic.slice(sliceFrom + 1).replace(/<pic\b[^>]*\/?>/gi, '').trim();
+            }
+            // 用 sms content text 作 Pass 2 pending key（跟 fillPlaceholderPicsViaPass2 端 m.content 对齐）
+            const passTwoKey = smsContent.slice(0, 80);
             const promise = generatePicPromptViaPhoneApi({
                 targetName: target,
-                smsContent: content,
+                smsContent,
                 userText: _passTwoState.activeUserText,
                 contactAnchor: anchor,
                 currentModel: state.imageGen?.currentModel || 'wai_anihentai',
             });
-            _passTwoState.pendingPromises.set(smsKey, promise);
-            console.log(`[smart-phone v0.14.57] ⚡ stream-detect <pic/> placeholder, fire Pass 2 (target=${target})`);
+            _passTwoState.pendingPromises.set(passTwoKey, promise);
+            console.log(`[smart-phone v0.14.58] ⚡ <pic/> placeholder → Pass 2 (target=${target})`);
             const capturedPicInner = picInner;
             const capturedTarget = target;
             promise.then((booruPrompt) => {
