@@ -1505,7 +1505,7 @@ async function onMessageReceived() {
         await fillPlaceholderPicsViaPass2(parsed, chatId, _userText);
     }
 
-    // v0.14.59 ⭐⭐⭐ pre-fire 对齐 — 把 GENERATION_STARTED 时启动的 ComfyUI Promise<URL>
+    // v0.14.60 pre-fire 对齐 — 把 GENERATION_STARTED 时启动的 ComfyUI Promise<URL>
     // 按 AI 写的 pic 顺序写入 picUrlCache[picTag]。render 时 triggerPicSlots 读 slot.dataset.pic
     // → 同 key cache 命中 → 直接 await Promise（已 resolved 就秒出图）
     if (_prefireState.active && _prefireState.urlPromises.length > 0) {
@@ -1520,14 +1520,18 @@ async function onMessageReceived() {
         collectPic(parsed.group);
         collectPic(parsed.moments);
         const alignCount = Math.min(picRefs.length, _prefireState.urlPromises.length);
+        const orphanCount = _prefireState.urlPromises.length - alignCount;
+        console.log(`[smart-phone v0.14.60] pre-fire 对齐：AI 写了 ${picRefs.length} 张 pic / 预生成了 ${_prefireState.urlPromises.length} 张 → 复用 ${alignCount}，孤儿 ${orphanCount}，缺口 ${picRefs.length - alignCount}`);
+        if (orphanCount > 0) {
+            console.warn(`[smart-phone v0.14.60] ⚠️ ${orphanCount} 张预生成图浪费！调整 analyzeUserIntent 的 count 启发可减少`);
+        }
         for (let i = 0; i < alignCount; i++) {
             const ref = picRefs[i];
             const urlPromise = _prefireState.urlPromises[i];
             if (!ref.pic || !urlPromise) continue;
-            // 把 Promise<URL> 存进 cache。triggerPicSlots line 3177 会 await 同一 Promise
-            // 不重复 fire ComfyUI。.then 链同步在 cache 里把 Promise 替换成 URL（持久化也走那儿）
             picUrlCache.set(ref.pic, urlPromise);
             const picTagForClosure = ref.pic;
+            console.log(`[smart-phone v0.14.60] alignment #${i}: picTag="${picTagForClosure.slice(0, 80)}…"`);
             urlPromise.then((url) => {
                 if (!url) {
                     picUrlCache.delete(picTagForClosure);
@@ -1539,8 +1543,6 @@ async function onMessageReceived() {
                 } catch {}
             }).catch(() => { picUrlCache.delete(picTagForClosure); });
         }
-        console.log(`[smart-phone v0.14.59] pre-fire 对齐：${alignCount}/${picRefs.length} 张图复用预生成结果，${picRefs.length - alignCount} 张走 fallback`);
-        // 多余的 prefired Promise 丢弃（_resetPrefireState 在下一回合 GENERATION_STARTED 触发）
     }
 
     if (parsed.sms?.length) State.appendMessages(chatId, parsed.sms);
@@ -3354,6 +3356,15 @@ function triggerPicSlots(screen) {
                 cached = persisted;
                 picUrlCache.set(picTag, persisted); // 顺便回填内存 cache 给后续 render 用
             }
+        }
+
+        // v0.14.60 诊断日志 — 用来判断 fire 重复 / cache miss
+        if (typeof cached === 'string') {
+            console.log(`[smart-phone v0.14.60] triggerPicSlots HIT (resolved) picTag="${picTag.slice(0,80)}…"`);
+        } else if (cached instanceof Promise) {
+            console.log(`[smart-phone v0.14.60] triggerPicSlots HIT (promise) picTag="${picTag.slice(0,80)}…"`);
+        } else {
+            console.log(`[smart-phone v0.14.60] triggerPicSlots MISS → fire ComfyUI picTag="${picTag.slice(0,80)}…"`);
         }
 
         // Already resolved — show immediately
