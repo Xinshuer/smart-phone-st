@@ -1341,9 +1341,10 @@ async function handleReroll() {
         ? State.popLastGroupNpcBatch(chatId, currentThread)
         : State.popLastNpcBatch(chatId, currentThread);
     if (!removed.length) { toastr.warning('没有可重新生成的消息'); return; }
-    for (const m of removed) {
-        if (m.pic) picUrlCache.delete(m.pic);
-    }
+    // v0.14.47 一并清掉持久化的 picUrls — 不然下次再 render 旧 picTag 还会用旧 URL
+    const removedPics = removed.filter(m => m.pic).map(m => m.pic);
+    for (const tag of removedPics) picUrlCache.delete(tag);
+    State.deletePicUrlsBatch(chatId, removedPics);
     rerender();
     try {
         const { Generate, is_send_press } = await import('../../../../script.js');
@@ -2871,7 +2872,18 @@ function triggerPicSlots(screen) {
             ? { from: hintName, context: hintContext, source: hintSource, reroll: isReroll }
             : (fallbackFrom ? { from: fallbackFrom, context: hintContext, source: hintSource, reroll: isReroll } : { context: hintContext, source: hintSource, reroll: isReroll });
 
-        const cached = picUrlCache.get(picTag);
+        let cached = picUrlCache.get(picTag);
+
+        // v0.14.47 内存 cache miss 时回查持久化 state（修"退出 ST 重进后图片重新生成"bug）
+        if (!cached) {
+            const _ctx = getContext();
+            const _chatId = _ctx.chatId || 'default';
+            const persisted = State.getPicUrl(_chatId, picTag);
+            if (persisted) {
+                cached = persisted;
+                picUrlCache.set(picTag, persisted); // 顺便回填内存 cache 给后续 render 用
+            }
+        }
 
         // Already resolved — show immediately
         if (typeof cached === 'string') {
@@ -2902,7 +2914,16 @@ function triggerPicSlots(screen) {
                 hint,
             });
         const promise = generator()
-            .then((url) => { picUrlCache.set(picTag, url); return url; })
+            .then((url) => {
+                picUrlCache.set(picTag, url);
+                // v0.14.47 持久化 URL 到 chat state，下次进 ST 不重新出图
+                try {
+                    const _ctx = getContext();
+                    const _chatId = _ctx.chatId || 'default';
+                    if (url) State.setPicUrl(_chatId, picTag, url);
+                } catch {}
+                return url;
+            })
             .catch((err) => { picUrlCache.delete(picTag); throw err; });
         picUrlCache.set(picTag, promise);
 
@@ -2921,6 +2942,12 @@ function triggerPicSlots(screen) {
 
 function rerollPicSlot(picTag) {
     picUrlCache.delete(picTag);
+    // v0.14.47 一起清持久化 — 否则下次进 ST 还是旧 URL
+    try {
+        const _ctx = getContext();
+        const _chatId = _ctx.chatId || 'default';
+        State.deletePicUrl(_chatId, picTag);
+    } catch {}
     const screen = phoneRoot?.querySelector('#smart-phone-screen');
     if (!screen) return;
     // Find the slot by its data-pic value, mark it for reroll, and reset so triggerPicSlots will re-process it.
@@ -3261,9 +3288,10 @@ async function rerollAsDifferentNpcHandler(name) {
         window.__smartPhone_rerollExcludeNpcs.delete(name);
         return;
     }
-    for (const m of removed) {
-        if (m.pic) picUrlCache.delete(m.pic);
-    }
+    // v0.14.47 同步清持久化 picUrls
+    const removedPics = removed.filter(m => m.pic).map(m => m.pic);
+    for (const tag of removedPics) picUrlCache.delete(tag);
+    State.deletePicUrlsBatch(chatId, removedPics);
     rerender();
 
     // 4. trigger ST regenerate
