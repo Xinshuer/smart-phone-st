@@ -845,20 +845,38 @@ function normalizeGroupTimes(groupArr, minBaseline = null) {
     }
 }
 
+// v0.14.70 ⭐⭐ 把 PHONE 块里所有 <pic prompt="long booru tags"/> 降级为 <pic/> 占位
+// 给 AI 看 chat 历史时用 — 避免 NSFW booru tags（"spread legs, pussy focus, nude..."）
+// 污染 AI 心智，导致后续 SFW 场景也输出 NSFW prompt。AI 看到 <pic/> 知道"那里发过图"
+// 但看不到图细节，专注剧情上下文。其他属性（SUBJECT/SUBJECTS）保留。
+function _stripPicPromptForHistory(text) {
+    if (!text) return '';
+    // <pic prompt="..." (其他属性)/> → <pic (其他属性)/>
+    return text.replace(/<pic\s+prompt="[^"]*"([^>]*)\/>/gi, (_m, rest) => `<pic${rest ? rest.trimStart() : ''}/>`.replace(/<pic\s+\/>/, '<pic/>'));
+}
+
 // v0.14.66 重建 PHONE 块给 AI 历史用 — 仅 prose-fallback 场景
 // 正常 STRICT 回合 msg.mes 已含完整 PHONE 块，直接存原文即可；prose fallback 时
 // AI 写了 prose plugin 合成了 SMS，给 AI 看 prose 会让下回合 AI 学 prose 风格
 // 所以从 parsed 重建干净 PHONE 块给 AI 看
+// v0.14.70 pic 也走 placeholder（不写 booru prompt），跟 _stripPicPromptForHistory 一致
 function _rebuildPhoneBlockFromParsed(parsed) {
     const lines = [];
+    // pic 占位 — 保留 SUBJECT/SUBJECTS 属性（如果原 picTag 有），不保留 prompt
+    const picPlaceholder = (picTag) => {
+        if (!picTag) return '';
+        const subjectMatch = picTag.match(/SUBJECT\s*=\s*"[^"]*"/i);
+        const subjectsMatch = picTag.match(/SUBJECTS\s*=\s*"[^"]*"/i);
+        const attrs = [subjectMatch?.[0], subjectsMatch?.[0]].filter(Boolean).join(' ');
+        return attrs ? ` <pic ${attrs}/>` : ' <pic/>';
+    };
     if (Array.isArray(parsed.sms)) {
         for (const m of parsed.sms) {
             const from = (m.from || '').replace(/"/g, '&quot;');
             const time = (m.time || '').replace(/"/g, '&quot;');
             const subjAttr = m.subject ? ` SUBJECT="${m.subject.replace(/"/g, '&quot;')}"` : '';
             const content = (m.content || '').trim();
-            const picTag = m.pic ? ` ${m.pic}` : '';
-            lines.push(`<SMS FROM="${from}" TIME="${time}"${subjAttr}>${content}${picTag}</SMS>`);
+            lines.push(`<SMS FROM="${from}" TIME="${time}"${subjAttr}>${content}${picPlaceholder(m.pic)}</SMS>`);
         }
     }
     if (Array.isArray(parsed.group)) {
@@ -867,8 +885,7 @@ function _rebuildPhoneBlockFromParsed(parsed) {
             const time = (m.time || '').replace(/"/g, '&quot;');
             const group = (m.group || '').replace(/"/g, '&quot;');
             const content = (m.content || '').trim();
-            const picTag = m.pic ? ` ${m.pic}` : '';
-            lines.push(`<GMSG FROM="${from}" GROUP="${group}" TIME="${time}">${content}${picTag}</GMSG>`);
+            lines.push(`<GMSG FROM="${from}" GROUP="${group}" TIME="${time}">${content}${picPlaceholder(m.pic)}</GMSG>`);
         }
     }
     if (Array.isArray(parsed.moments)) {
@@ -876,8 +893,7 @@ function _rebuildPhoneBlockFromParsed(parsed) {
             const from = (m.from || '').replace(/"/g, '&quot;');
             const time = (m.time || '').replace(/"/g, '&quot;');
             const content = (m.content || '').trim();
-            const picTag = m.pic ? ` ${m.pic}` : '';
-            lines.push(`<MOMENTS FROM="${from}" TIME="${time}">${content}${picTag}</MOMENTS>`);
+            lines.push(`<MOMENTS FROM="${from}" TIME="${time}">${content}${picPlaceholder(m.pic)}</MOMENTS>`);
         }
     }
     if (!lines.length) return '';
@@ -1489,16 +1505,17 @@ async function onMessageReceived() {
     }
 
     // v0.14.66 ⭐ 在 strip 前把 PHONE 块原文存到 msg.extra.smartPhoneOriginal
-    // 让 AI 在下一回合通过 chat 历史看到自己之前回了什么，避免出戏（"先看裙底"前面已经掰开等不连贯）
-    // ST 主聊天框继续显示 '📱'（msg.mes），AI 看到的 chat 历史在 onPromptReady 里被替换回原文
-    // v0.14.67 同时存 thread ID，让 onPromptReady 按 thread 过滤（避免切联系人时旧 thread 的
-    // NSFW 上下文污染新 thread 的 SFW 默认状态）
+    // 让 AI 在下一回合通过 chat 历史看到自己之前回了什么，避免出戏
+    // v0.14.67 同时存 thread ID，让 onPromptReady 按 thread 过滤
+    // v0.14.70 ⭐⭐ 关键优化：存进 chat 历史的 PHONE 块把 <pic prompt="long booru tags"/>
+    // 降级为 <pic/> 占位 — AI 看历史知道"发过图"但看不到 booru tags（避免 NSFW tag 词
+    // 污染下回合心智，导致 SFW 场景也输出 NSFW prompt）
     if (msg.mes && msg.mes !== '📱' && /<PHONE>|<SMS\b|<GMSG\b|<MOMENTS\b|<XHS_POST\b|<FORUM_POST\b|<NPC_PROFILE\b/i.test(msg.mes)) {
         if (!msg.extra) msg.extra = {};
-        msg.extra.smartPhoneOriginal = msg.mes;
+        msg.extra.smartPhoneOriginal = _stripPicPromptForHistory(msg.mes);
         msg.extra.smartPhoneThread = currentThread || '__global__';
     } else if (proseFallbackUsed && parsed) {
-        // prose fallback：从 parsed 重建干净 PHONE 块给 AI 看（避免下回合 AI 学 prose 风格）
+        // prose fallback：从 parsed 重建干净 PHONE 块给 AI 看（pic 也走 placeholder）
         const rebuilt = _rebuildPhoneBlockFromParsed(parsed);
         if (rebuilt) {
             if (!msg.extra) msg.extra = {};
