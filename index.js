@@ -643,27 +643,42 @@ function onPromptReady(eventData) {
         }
     }
 
-    // v0.14.66 ⭐ 还原 chat 历史里 AI 之前发的 PHONE 块原文（msg.mes='📱' 显示给 user，
-    // chat 历史给 AI 看的是 msg.extra.smartPhoneOriginal）。让 AI 知道自己之前回了什么 →
-    // 避免出戏（角色重复说"刚洗完澡"、服装跳变、姿势不连贯等）。
+    // v0.14.67 ⭐ 还原 chat 历史里 AI 之前发的 PHONE 块原文，**仅当前 thread 的**
+    // （切换联系人时旧 thread 的 NSFW 上下文不应污染新 thread）。
+    // 非当前 thread 的 assistant message 保持 '📱'（AI 看到 '📱' 知道有过其他对话但不知道内容）
     if (Array.isArray(eventData.chat)) {
         const ctxChat = getContext()?.chat || [];
-        // 按时间顺序收集所有 PHONE 块原文（来自 ctx.chat 的 assistant messages）
+        const currentTid = currentThread || '__global__';
+        // 按时间顺序收集所有 PHONE 块原文 — 仅当前 thread 的
         const originals = [];
+        let skippedOtherThread = 0;
         for (const m of ctxChat) {
             if (!m || m.is_user) continue;
-            if (m.extra?.smartPhoneOriginal) originals.push(m.extra.smartPhoneOriginal);
+            if (m.extra?.smartPhoneOriginal) {
+                const tid = m.extra?.smartPhoneThread || '__global__';
+                if (tid === currentTid) {
+                    originals.push(m.extra.smartPhoneOriginal);
+                } else {
+                    skippedOtherThread++;
+                    // 仍占位 placeholder，让 oi 索引按时序对齐
+                    originals.push(null);
+                }
+            }
         }
-        // 按时间顺序遍历 eventData.chat，替换 assistant content='📱' 的为对应原文
         let oi = 0;
+        let restored = 0;
         for (const m of eventData.chat) {
             if (!m || m.role !== 'assistant') continue;
             if (m.content === '📱' && oi < originals.length) {
-                m.content = originals[oi];
+                if (originals[oi]) {
+                    m.content = originals[oi];
+                    restored++;
+                }
+                // null（其他 thread）保持 '📱'
                 oi++;
             }
         }
-        if (oi > 0) console.log(`[smart-phone v0.14.66] 还原 ${oi} 条 chat 历史 PHONE 块给 AI 看（防出戏）`);
+        if (restored > 0) console.log(`[smart-phone v0.14.67] 还原 ${restored} 条当前 thread "${currentTid}" 的 PHONE 块（跳过 ${skippedOtherThread} 条其他 thread）`);
     }
 
     const contacts = s.contacts.map((c) => ({ name: c.name, note: c.note }));
@@ -1448,15 +1463,19 @@ async function onMessageReceived() {
     // v0.14.66 ⭐ 在 strip 前把 PHONE 块原文存到 msg.extra.smartPhoneOriginal
     // 让 AI 在下一回合通过 chat 历史看到自己之前回了什么，避免出戏（"先看裙底"前面已经掰开等不连贯）
     // ST 主聊天框继续显示 '📱'（msg.mes），AI 看到的 chat 历史在 onPromptReady 里被替换回原文
+    // v0.14.67 同时存 thread ID，让 onPromptReady 按 thread 过滤（避免切联系人时旧 thread 的
+    // NSFW 上下文污染新 thread 的 SFW 默认状态）
     if (msg.mes && msg.mes !== '📱' && /<PHONE>|<SMS\b|<GMSG\b|<MOMENTS\b|<XHS_POST\b|<FORUM_POST\b|<NPC_PROFILE\b/i.test(msg.mes)) {
         if (!msg.extra) msg.extra = {};
         msg.extra.smartPhoneOriginal = msg.mes;
+        msg.extra.smartPhoneThread = currentThread || '__global__';
     } else if (proseFallbackUsed && parsed) {
         // prose fallback：从 parsed 重建干净 PHONE 块给 AI 看（避免下回合 AI 学 prose 风格）
         const rebuilt = _rebuildPhoneBlockFromParsed(parsed);
         if (rebuilt) {
             if (!msg.extra) msg.extra = {};
             msg.extra.smartPhoneOriginal = rebuilt;
+            msg.extra.smartPhoneThread = currentThread || '__global__';
         }
     }
 
