@@ -790,26 +790,36 @@ function formatHHMM(totalMinutes) {
     const h = Math.floor(mm / 60), m = mm % 60;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
-function normalizeSmsTimes(smsArr) {
-    if (!Array.isArray(smsArr) || smsArr.length < 2) return;
-    // 按 emission 顺序找同 FROM 连续段
+function normalizeSmsTimes(smsArr, minBaseline = null) {
+    if (!Array.isArray(smsArr) || smsArr.length === 0) return;
+    // v0.14.69 minBaseline 支持跨回合单调时间：传入当前 thread 最后一条 time
+    // 保证本回合 baseline > 上一回合最后 time，避免 UI 时间倒序错乱
     let i = 0;
     while (i < smsArr.length) {
         let j = i;
         while (j < smsArr.length && smsArr[j].from === smsArr[i].from) j++;
         const groupLen = j - i;
+        // 基线：优先用第一条原 TIME（合法 HH:MM），否则用当前墙钟
+        let minutes = parseHHMM(smsArr[i].time);
+        if (minutes === null) {
+            const d = new Date();
+            minutes = d.getHours() * 60 + d.getMinutes();
+        }
+        // 跨回合 baseline 单调递增：本组第一条 time <= 上一回合最后 time → 推到 +1
+        if (minBaseline !== null && minutes <= minBaseline) {
+            minutes = minBaseline + 1 + Math.floor(Math.random() * 3); // +1..+3
+        }
         if (groupLen >= 2) {
-            // 基线：优先用第一条原 TIME（合法 HH:MM），否则用当前墙钟
-            let minutes = parseHHMM(smsArr[i].time);
-            if (minutes === null) {
-                const d = new Date();
-                minutes = d.getHours() * 60 + d.getMinutes();
-            }
             for (let k = i; k < j; k++) {
                 smsArr[k].time = formatHHMM(minutes);
                 minutes += 2 + Math.floor(Math.random() * 7); // +2..+8 分钟
             }
+        } else {
+            // 单条也要保证 > minBaseline
+            smsArr[i].time = formatHHMM(minutes);
         }
+        // 下一组的 minBaseline 推进到本组最后 time
+        if (minBaseline !== null) minBaseline = parseHHMM(smsArr[j - 1].time);
         i = j;
     }
 }
@@ -817,12 +827,16 @@ function normalizeSmsTimes(smsArr) {
 // v0.14.37 群聊 TIME 单调重排：群聊里 N 个成员交错发言，所有 GMSG 按 emission
 // 顺序统一时间轴递增（不按 FROM 分组）。AV 多图叙事可能有 10+ 条 GMSG，间隔可
 // 比 SMS 小（群聊本就更密集），用 +0..+3 分钟更自然。
-function normalizeGroupTimes(groupArr) {
-    if (!Array.isArray(groupArr) || groupArr.length < 2) return;
+function normalizeGroupTimes(groupArr, minBaseline = null) {
+    if (!Array.isArray(groupArr) || groupArr.length === 0) return;
     let minutes = parseHHMM(groupArr[0].time);
     if (minutes === null) {
         const d = new Date();
         minutes = d.getHours() * 60 + d.getMinutes();
+    }
+    // v0.14.69 跨回合 baseline 单调递增
+    if (minBaseline !== null && minutes <= minBaseline) {
+        minutes = minBaseline + 1 + Math.floor(Math.random() * 2);
     }
     for (let i = 0; i < groupArr.length; i++) {
         groupArr[i].time = formatHHMM(minutes);
@@ -1183,18 +1197,32 @@ async function onMessageReceived() {
             }
         }
     }
+    const chatId = ctx.chatId || 'default';
+
+    // v0.14.69 计算当前 thread 最后一条消息的 time，作 normalize baseline
+    // 保证跨回合时间单调递增（避免 AI 第二回合从 10:31 起、UI 显示乱序）
+    const _getThreadLastTime = (tid) => {
+        if (!tid) return null;
+        const cs = State.getChatState(chatId);
+        const msgs = (isGroupThread(tid) ? cs.groupThreads?.[tid] : cs.threads?.[tid]) || [];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+            const t = parseHHMM(msgs[i]?.time);
+            if (t !== null) return t;
+        }
+        return null;
+    };
+    const threadLastTime = _getThreadLastTime(currentThread);
+
     if (parsed.sms?.length) {
         stripStageFromPic(parsed.sms);
         // SMS 路径：同 FROM 连续 ≥ 2 条 → +2..+8 分钟递增
-        normalizeSmsTimes(parsed.sms);
+        normalizeSmsTimes(parsed.sms, threadLastTime);
     }
     if (parsed.group?.length) {
         stripStageFromPic(parsed.group);
         // 群聊路径：所有 GMSG 按 emission 顺序单调递增（不按 FROM 分组，群聊里 N 个成员交错发言）
-        normalizeGroupTimes(parsed.group);
+        normalizeGroupTimes(parsed.group, threadLastTime);
     }
-
-    const chatId = ctx.chatId || 'default';
 
     // Phase D — pending command-character post: splice user images into matching post & flag for auto-reply
     // v0.14.29: 同回合附带 AI 输出的 inline COMMENT 标签作为 NPC 评论挂到主帖（消除以前
