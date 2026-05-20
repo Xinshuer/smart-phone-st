@@ -3,10 +3,10 @@
     "loading_order": 5,
     "requires": [],
     "optional": ["smart-image-gen"],
-    "js": "index.js?v=0.14.73",
-    "css": "style.css?v=0.14.73",
+    "js": "index.js?v=0.14.74",
+    "css": "style.css?v=0.14.74",
     "author": "Xinshuer",
-    "version": "0.14.73",
+    "version": "0.14.74",
     "homePage": "https://github.com/Xinshuer/smart-phone-st",
     "auto_update": true
 }
