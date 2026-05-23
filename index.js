@@ -1766,10 +1766,32 @@ async function handleSettingsRefresh() {
     rerender();
 }
 
+// v0.14.75 朋友圈/小红书/论坛 NPC 池跟随当前激活世界书。
+// 此前 bug：联系人列表是全局的（跨世界书），refresh 时全部喂给 AI 当 author 候选 →
+// 切换世界书后，旧世界书（如 @舔狗反派）的联系人仍是朋友圈作者来源。
+// 修复：filter contacts by `sourceBook ∩ activeBooks` (同 messages tab 显示规则)。
+// showAllContacts 开关下不过滤（用户显式要看全部）。
+function getActiveBookContactsForFeed() {
+    const s = State.load();
+    const activeBookSet = new Set(WB.getActiveBookNames());
+    const showAll = !!s.worldbook?.showAllContacts;
+    return (s.contacts || []).filter((c) => {
+        if (c.tempOrigin) return false; // 临时陌生人 NPC 不主动发圈
+        if (showAll) return true;
+        const sb = Array.isArray(c.sourceBook) ? c.sourceBook : (c.sourceBook ? [c.sourceBook] : []);
+        if (sb.length === 0) return false; // orphan 默认不进 NPC 池
+        return sb.some((b) => activeBookSet.has(b));
+    });
+}
+
 async function handleMomentsRefresh() {
     // v0.14.10 fresh feed 排除 tempOrigin: true 联系人 (升级自陌生人的临时 NPC 不主动发朋友圈)
-    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
-    if (!contacts.length) { toastr.warning('请先在设置中导入联系人'); return; }
+    // v0.14.75 + filter by current active worldbook (sourceBook ∩ activeBooks)
+    const contacts = getActiveBookContactsForFeed();
+    if (!contacts.length) {
+        toastr.warning('当前世界书下无联系人 — 切换世界书 / 在设置中导入');
+        return;
+    }
     toastr.info('生成朋友圈动态…');
     const ctx = getContext();
     const chatId = ctx.chatId || 'default';
@@ -1803,8 +1825,8 @@ async function handleMomentsSubmit({ content, images = [] }) {
     State.appendMoments(chatId, [post]);
     momentsSetView('feed');
     rerender();
-    // v0.14.10 排除 tempOrigin 联系人
-    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
+    // v0.14.75 评论池跟随当前激活世界书（同 refresh 规则）
+    const contacts = getActiveBookContactsForFeed();
     if (contacts.length) {
         toastr.info('等待联系人评论…');
         setTimeout(async () => {
@@ -1828,8 +1850,8 @@ async function handleMomentsComment(postId, text) {
     const userName = ctx?.name1 || '我';
     State.appendMomentsComment(chatId, postId, [{ from: 'user', authorName: userName, content: text, time: Protocol.nowHHMM() }]);
     rerender();
-    // v0.14.10 排除 tempOrigin 联系人
-    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
+    // v0.14.75 评论池跟随当前激活世界书（同 refresh 规则）
+    const contacts = getActiveBookContactsForFeed();
     if (contacts.length) {
         setTimeout(async () => {
             const post = State.findMomentsPost(chatId, postId);
