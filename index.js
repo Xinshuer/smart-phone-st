@@ -3316,10 +3316,19 @@ function triggerPicSlots(screen) {
             .then((url) => {
                 picUrlCache.set(picTag, url);
                 // v0.14.47 持久化 URL 到 chat state，下次进 ST 不重新出图
+                // v0.14.78 还要写回 feed post.images（xhs/moments/forum），让下次 render
+                // 直接 <img> 不再过 slot — 即便 picUrlCache 内存丢了 / cs.picUrls 没 hit，
+                // post.images 也兜底，不会再触发 ComfyUI
                 try {
                     const _ctx = getContext();
                     const _chatId = _ctx.chatId || 'default';
                     if (url) State.setPicUrl(_chatId, picTag, url);
+                    const feedPostId = slot.dataset.feedPostId;
+                    const feedPlatform = slot.dataset.feedPlatform;
+                    const feedImgIdx = parseInt(slot.dataset.feedImgIdx || '0', 10) || 0;
+                    if (url && feedPostId && feedPlatform) {
+                        State.attachFeedPostImage(_chatId, feedPlatform, feedPostId, feedImgIdx, url);
+                    }
                 } catch {}
                 return url;
             })
@@ -3342,10 +3351,13 @@ function triggerPicSlots(screen) {
 function rerollPicSlot(picTag) {
     picUrlCache.delete(picTag);
     // v0.14.47 一起清持久化 — 否则下次进 ST 还是旧 URL
+    // v0.14.78 同时清掉 v0.14.78 写回 post.images 的自动 URL（resolvedFromPic 模式）
+    // 否则 reroll 后下次 render 仍看到 post.images 里的旧 URL（slot 永远不会创建）
     try {
         const _ctx = getContext();
         const _chatId = _ctx.chatId || 'default';
         State.deletePicUrl(_chatId, picTag);
+        State.detachFeedPostImageByPic(_chatId, picTag);
     } catch {}
     const screen = phoneRoot?.querySelector('#smart-phone-screen');
     if (!screen) return;
