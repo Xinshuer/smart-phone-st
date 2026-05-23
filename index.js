@@ -1491,7 +1491,8 @@ async function onMessageReceived() {
             try {
                 if (info.platform === '朋友圈') {
                     const post = State.findMomentsPost(chatId, info.postId);
-                    const contacts = State.load().contacts.filter(c => !c.tempOrigin);
+                    // v0.14.75 fallback NPC 池跟随当前激活世界书（同 refresh 规则）
+                    const contacts = getActiveBookContactsForFeed();
                     if (post) await generateMomentReplies(chatId, info.postId, post, contacts, ctx);
                 } else if (info.platform === '论坛') {
                     const post = State.findForumPost(chatId, info.postId);
@@ -3221,10 +3222,13 @@ async function submitCommandPost({ targetName, platform, instruction, imageUrls 
         return;
     }
     // v0.14.29 同回合 NPC 评论：把当前联系人池传给 OOC 让 AI 一次性生成主帖 + 3-6 条评论
-    const allContacts = State.load().contacts.filter(c => !c.tempOrigin).map(c => c.name);
+    // v0.14.76 仅 platform === '朋友圈' 时用联系人池（半熟人评论网），论坛/小红书走陌生网友（不传）
+    const contactNames = platform === '朋友圈'
+        ? getActiveBookContactsForFeed().map(c => c.name).filter(n => n !== targetName)
+        : [];
     const ooc = Protocol.buildPostCommandOOC({
         targetName, time, platform, instruction, imageCount: imageUrls.length,
-        otherContactNames: allContacts,
+        otherContactNames: contactNames,
     });
     const safeOoc = Protocol.makeRequestSafe(ooc);
     ta.value = `📱 <Request: ${safeOoc}>`;
