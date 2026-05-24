@@ -585,6 +585,8 @@ async function rerender() {
             onImportFromOtherWorld: openImportFromOtherWorldModal,
             onEditContactSourceBook: openEditContactSourceBookModal,
             onCleanupOrphanChats: openCleanupOrphanChatStatesModal,
+            onResetPicUrls: handleResetPicUrls,           // v0.14.86 重置 picUrls + post.images
+            onResetAllImages: handleResetAllImages,        // v0.14.86 核弹（含 anchor.referenceImage）
         });
     }
 
@@ -2113,14 +2115,30 @@ async function handleImportContact(uid, bookName) {
         const oldSb = Array.isArray(existing.sourceBook) ? existing.sourceBook : (existing.sourceBook ? [existing.sourceBook] : []);
         const newSb = Array.isArray(fresh.sourceBook) ? fresh.sourceBook : (fresh.sourceBook ? [fresh.sourceBook] : []);
         const mergedSb = [...new Set([...oldSb, ...newSb])];
-        // v0.14.28：
-        // - 永远保留 anchor.referenceImage / seed / locked（用户人设图、用户锁定）
-        // - anchor.prompt：未锁定时刷新为 fresh.anchor.prompt（用户主动 re-import 的意图就是要新值）
-        // - sourceHash 同步到 fresh.sourceHash，避免之后 🔄 resync 重复触发覆盖
+        // v0.14.86 卡内容变更检测（hash 比对）→ 作废 sdPrompt + referenceImage（除非 locked）
+        // 改卡 agent 改完 sdPrompt 相关内容后，user re-import 自动触发，不再需要手动 ✨
+        const contentChanged = existing.sourceHash !== fresh.sourceHash;
         const existingAnchor = existing.anchor || {};
-        const updatedAnchor = existingAnchor.locked
-            ? { ...existingAnchor }
-            : { ...existingAnchor, prompt: (fresh.anchor.prompt && fresh.anchor.prompt.trim()) || existingAnchor.prompt };
+        let updatedAnchor;
+        if (existingAnchor.locked) {
+            // 锁定 → 全部保留
+            updatedAnchor = { ...existingAnchor };
+        } else {
+            updatedAnchor = {
+                ...existingAnchor,
+                prompt: (fresh.anchor.prompt && fresh.anchor.prompt.trim()) || existingAnchor.prompt,
+            };
+            if (contentChanged) {
+                // 内容变了 + 没锁 → 作废衍生品，触发 ✨ 重生
+                if (updatedAnchor.sdPrompt) {
+                    updatedAnchor.sdPrompt = null;
+                    updatedAnchor.sdPromptStale = true;
+                }
+                if (updatedAnchor.referenceImage) {
+                    updatedAnchor.referenceImage = null;
+                }
+            }
+        }
         State.upsertContact({
             ...existing,
             rawContent: fresh.rawContent,
@@ -2130,7 +2148,10 @@ async function handleImportContact(uid, bookName) {
             sourceHash: fresh.sourceHash,
             anchor: updatedAnchor,
         });
-        toastr.success(`已更新：${fresh.name}（保留人设图，外貌 tag 已${existingAnchor.locked ? '锁定不变' : '同步'}）`);
+        const msgSuffix = existingAnchor.locked
+            ? '锁定不变'
+            : (contentChanged ? '已同步 + 作废 sdPrompt/人设图，需重生 ✨' : '已同步');
+        toastr.success(`已更新：${fresh.name}（${msgSuffix}）`);
     } else {
         State.upsertContact(fresh);
         toastr.success(`已导入：${fresh.name}`);
@@ -2369,6 +2390,68 @@ function handleRemoveContact(name) {
 
 function handleShowAllContactsToggle(checked) {
     setShowAllContactsFlag(checked);
+    rerender();
+}
+
+// v0.14.86 重置图片 URL（移动端友好替代 F12 控制台脚本）
+// 清空：所有 chat 的 picUrls + 所有 resolvedFromPic=true 的 post.images
+// 不清：anchor.referenceImage（用户人设图保留）
+function handleResetPicUrls() {
+    if (!confirm('确认清掉所有图片 URL 缓存？\n\n- chat 历史的图会变成 shimmer / 待重生\n- feed 帖（朋友圈/小红书/论坛）自动写回的图会还原成 pic prompt 占位\n- ✨ 人设图保留不动\n\n清空后用户用到该联系人 / feed 时会自动重生。')) return;
+    const s = State.load();
+    let picUrlsCleared = 0, postsImagesCleared = 0;
+    for (const cs of Object.values(s.chats || {})) {
+        if (cs.picUrls) {
+            picUrlsCleared += Object.keys(cs.picUrls).length;
+            cs.picUrls = {};
+        }
+        for (const arr of [cs.xhs, cs.moments, cs.forum]) {
+            if (!Array.isArray(arr)) continue;
+            for (const p of arr) {
+                if (p.resolvedFromPic) {
+                    delete p.images;
+                    delete p.resolvedFromPic;
+                    postsImagesCleared++;
+                }
+            }
+        }
+    }
+    picUrlCache.clear(); // 内存缓存同步清
+    State.save();
+    toastr.success(`清掉 ${picUrlsCleared} 条 picUrls + ${postsImagesCleared} 条 feed posts`);
+    rerender();
+}
+
+// v0.14.86 核弹版（也清 anchor.referenceImage，配合 ComfyUI output 全删用）
+function handleResetAllImages() {
+    if (!confirm('⚠️ 核弹清空 — 确认？\n\n会清掉：\n1. 所有 chat 的图片缓存\n2. 所有 feed 帖自动写回的图\n3. ⚠️ **所有联系人的 ✨ 人设图**（头像变首字母）\n\n清完后需要手动给每个联系人重新点 ✨ 生成参考图。\n\n通常 ComfyUI output 全删后才用这个。')) return;
+    const s = State.load();
+    let picUrlsCleared = 0, postsImagesCleared = 0, anchorsCleared = 0;
+    for (const cs of Object.values(s.chats || {})) {
+        if (cs.picUrls) {
+            picUrlsCleared += Object.keys(cs.picUrls).length;
+            cs.picUrls = {};
+        }
+        for (const arr of [cs.xhs, cs.moments, cs.forum]) {
+            if (!Array.isArray(arr)) continue;
+            for (const p of arr) {
+                if (p.resolvedFromPic) {
+                    delete p.images;
+                    delete p.resolvedFromPic;
+                    postsImagesCleared++;
+                }
+            }
+        }
+    }
+    for (const c of (s.contacts || [])) {
+        if (c.anchor?.referenceImage) {
+            c.anchor.referenceImage = null;
+            anchorsCleared++;
+        }
+    }
+    picUrlCache.clear();
+    State.save();
+    toastr.success(`核弹清完：${picUrlsCleared} picUrls + ${postsImagesCleared} feed posts + ${anchorsCleared} 人设图`);
     rerender();
 }
 
