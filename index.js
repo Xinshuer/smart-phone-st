@@ -678,12 +678,25 @@ function onPromptReady(eventData) {
         let oi = 0;
         let restored = 0;
         let userCleaned = 0;
-        // v0.14.85 OOC user 消息剥壳：找 === user 消息 === ... === 完 === 之间的内容
-        const USER_MSG_EXTRACT_RE = /===\s*user\s*消息\s*===\s*([\s\S]*?)\s*===\s*完\s*===/i;
-        // 兼容旧格式 "用户发送的短信内容：「xxx」"（已剥光「」 → "用户发送的短信内容：" 后到换行）
-        const LEGACY_USER_MSG_RE = /用户发送的短信内容\s*[:：]\s*([^\n]+)/;
+        // v0.14.94 OOC user 消息剥壳：覆盖全部 3 种 OOC builder 格式
+        //   ① buildSendOOC（v0.14.83 后）：=== user 消息 === xxx === 完 ===
+        //   ② buildSendOOC（v0.14.83 前 / legacy）：用户发送的短信内容：「xxx」
+        //   ③ buildPostCommandOOC（命令角色发帖）：用户指令：「xxx」
+        //   ④ buildGroupPostCommandOOC（群聊生图）：场景描述：xxx
+        // 之前 v0.14.85 只盖 ①②，③④ 漏 → AI 看到一大段 OOC 协议无法识别真实 user 内容
+        // → bug 复现："命令她在小红书发帖" 类指令 AI 解读成空 / 历史污染
+        const EXTRACT_PATTERNS = [
+            // ① v0.14.83+ buildSendOOC + v0.14.94 buildPostCommandOOC/buildGroupPostCommandOOC bookend 格式
+            //    通用 === user (消息|指令|场景) === ... === 完 === 标识
+            { re: /===\s*user\s*(?:消息|指令|场景)\s*===\s*([\s\S]*?)\s*===\s*完\s*===/i, label: 'bookend' },
+            // ② legacy buildSendOOC（v0.14.83 前）
+            { re: /用户发送的短信内容\s*[:：]\s*([^\n]+?)(?=\s+\*\*|\s+用户索取|\s+\[|$)/, label: 'sms_legacy' },
+            // ③ buildPostCommandOOC（命令角色发帖）— 用户指令 中段保留作 fallback
+            { re: /用户指令\s*[:：]\s*([\s\S]+?)\s*(?:\*\*强制规则|\*\*规则|平台特|附图数量|🔁|$)/, label: 'cmd_post' },
+            // ④ buildGroupPostCommandOOC（群聊生图）— 场景描述 fallback
+            { re: /场景描述\s*[:：]\s*([\s\S]+?)\s*(?:\*\*|场景：由你|🔁|$)/, label: 'group_pic' },
+        ];
         // 当前回合（chat 末尾的 user 消息）不动；只剥**历史**用户 OOC，让历史保持清晰
-        // 找最后一条 user 消息的索引
         let lastUserIdx = -1;
         for (let i = eventData.chat.length - 1; i >= 0; i--) {
             if (eventData.chat[i]?.role === 'user') { lastUserIdx = i; break; }
@@ -706,10 +719,25 @@ function onPromptReady(eventData) {
             if (m.role === 'user' && mi !== lastUserIdx && typeof m.content === 'string') {
                 const c = m.content;
                 // 仅处理含 OOC 标记的（小红书/朋友圈/SMS/群聊等手机指令）
-                if (c.length > 200 && /(实时手机指令|手机短信|手机群聊|命令角色发帖|群聊生图指令)/.test(c)) {
-                    const m1 = c.match(USER_MSG_EXTRACT_RE) || c.match(LEGACY_USER_MSG_RE);
-                    if (m1 && m1[1]) {
-                        m.content = m1[1].trim();
+                if (c.length > 200 && /(实时手机指令|手机短信|手机群聊|命令角色发帖|群聊生图指令|命令她在|发帖)/.test(c)) {
+                    let matched = null;
+                    for (const { re, label } of EXTRACT_PATTERNS) {
+                        const m1 = c.match(re);
+                        if (m1 && m1[1] && m1[1].trim()) {
+                            matched = { content: m1[1].trim().slice(0, 500), label };
+                            break;
+                        }
+                    }
+                    if (matched) {
+                        // 加上下文标签让 AI 知道是哪种指令历史
+                        // bookend 标签匹配 3 种 OOC，用 content 嗅探具体类型
+                        let prefix = '';
+                        if (matched.label === 'cmd_post' || /命令角色发帖|命令.{0,5}在.{0,5}发帖/.test(c)) {
+                            prefix = '[命令发帖] ';
+                        } else if (matched.label === 'group_pic' || /实时群聊生图|手机群聊/.test(c)) {
+                            prefix = '[群聊生图] ';
+                        }
+                        m.content = `${prefix}${matched.content}`;
                         userCleaned++;
                     } else {
                         // 抓不到实际 user 文本时，至少把超长 OOC 标记为简短摘要
