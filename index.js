@@ -1696,7 +1696,12 @@ function enterBubbleEditMode(bubble) {
 
     const ctx = getContext();
     const cs = State.getChatState(ctx.chatId || 'default');
-    const msg = cs.threads?.[currentThread]?.[idx];
+    // v0.14.89 同时支持群聊编辑（之前 enterBubbleEditMode 只查 cs.threads，
+    // 群聊用户消息点 ✎ 按钮静默无效）
+    const isGroup = isGroupThread(currentThread);
+    const msg = isGroup
+        ? cs.groupThreads?.[currentThread]?.[idx]
+        : cs.threads?.[currentThread]?.[idx];
     if (!msg) return;
 
     bubble.classList.add('bubble-editing');
@@ -1717,10 +1722,42 @@ function enterBubbleEditMode(bubble) {
         e.stopPropagation();
         rerender(); // discard, restore from state
     });
-    bubble.querySelector('.bubble-edit-save')?.addEventListener('click', (e) => {
+    bubble.querySelector('.bubble-edit-save')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         const newContent = ta?.value?.trim() || '';
-        if (newContent && newContent !== original) {
+        if (newContent && newContent !== original && msg.me) {
+            // 1. 更新 plugin 状态
+            msg.content = newContent;
+            State.save();
+            // 2. v0.14.89 ⭐ 同步更新 ST 主聊天里对应 OOC 的 userText
+            // 之前 bug：用户编辑 SMS bubble → 点 ↩ reroll → ST 用 ctx.chat 最后一条
+            // user.mes 重新生成 → 那条还是当初发的 OOC 含原文 → AI 看不到编辑后内容。
+            // 现在编辑保存时反查 ST chat，找到含 === user 消息 === original === 完 ===
+            // 的最新 user message，把 original 替换成 newContent + saveChat。
+            try {
+                const ctxChat = getContext()?.chat;
+                if (Array.isArray(ctxChat)) {
+                    // 转义 original 里的正则特殊字符
+                    const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const re = new RegExp(`(===\\s*user\\s*消息\\s*===\\s*)(${escaped})(\\s*===\\s*完\\s*===)`);
+                    // 从后往前找最近的匹配 user message
+                    for (let i = ctxChat.length - 1; i >= 0; i--) {
+                        const m = ctxChat[i];
+                        if (!m || !m.is_user) continue;
+                        if (typeof m.mes !== 'string') continue;
+                        if (re.test(m.mes)) {
+                            m.mes = m.mes.replace(re, `$1${newContent}$3`);
+                            console.log(`[smart-phone v0.14.89] 编辑同步到 ST chat[${i}] user message`);
+                            await (getContext().saveChat ? getContext().saveChat() : null);
+                            break;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[smart-phone v0.14.89] 编辑同步 ST chat 失败:', err);
+            }
+        } else if (newContent && newContent !== original) {
+            // AI 消息编辑（msg.me === false）— 只动 plugin 状态，不动 ST chat（AI 回复不能同步反向改）
             msg.content = newContent;
             State.save();
         }
