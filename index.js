@@ -388,7 +388,8 @@ async function rerender() {
                             ? row.dataset.threadId
                             : row.dataset.thread;
                         if (selectionMode) exitSelectionMode();
-                        pendingPostCommand = null;
+                        // v0.14.84 不再这里清 pendingPostCommand —
+                        // 导航期间 AI 可能还没返回命令发帖响应，清掉会丢评论路由
                         rerender();
                     });
                     // v0.14.2 长按/右键 = 删除该聊天（微信式）
@@ -455,7 +456,7 @@ async function rerender() {
                         currentThread = name;
                         currentMessagesSubTab = 'chats';
                         if (selectionMode) exitSelectionMode();
-                        pendingPostCommand = null;
+                        // v0.14.84 不清 pendingPostCommand（同上）
                         rerender();
                     });
                 });
@@ -490,7 +491,7 @@ async function rerender() {
             screen.querySelector('[data-back]')?.addEventListener('click', () => {
                 currentThread = null;
                 if (selectionMode) exitSelectionMode();
-                pendingPostCommand = null;
+                // v0.14.84 不清 pendingPostCommand（user 退出私聊后 AI 可能还没返回命令响应）
                 rerender();
             });
             screen.querySelector('#phone-reroll-btn')?.addEventListener('click', handleReroll);
@@ -1285,15 +1286,30 @@ async function onMessageReceived() {
                             time: c.time || cmd.time,
                         }));
                     } else {
-                        // moments / xhs 用 comments 字段 + authorName / content / time
-                        post.comments = inlineComments.map((c, i) => ({
-                            id: `cmt_inline_${Date.now()}_${i}`,
-                            from: c.from,
-                            authorName: c.from,
-                            content: c.content,
-                            replyTo: c.replyTo || null,
-                            time: c.time || cmd.time,
-                        }));
+                        // v0.14.84 拆 moments / xhs 双形：
+                //   moments UI 渲染读 c.authorName / c.content（lib/apps/moments.js）
+                //   xhs UI 渲染读 c.user / c.text（lib/apps/xhs.js）
+                // 之前两个平台统一用 authorName/content shape → XHS UI 看不见评论体
+                        if (cmd.platform === '小红书') {
+                            post.comments = inlineComments.map((c, i) => ({
+                                id: `cmt_inline_${Date.now()}_${i}`,
+                                from: c.from,
+                                user: c.from,        // ← XHS UI 用 c.user
+                                text: c.content,     // ← XHS UI 用 c.text
+                                replyTo: c.replyTo || null,
+                                time: c.time || cmd.time,
+                            }));
+                        } else {
+                            // 朋友圈
+                            post.comments = inlineComments.map((c, i) => ({
+                                id: `cmt_inline_${Date.now()}_${i}`,
+                                from: c.from,
+                                authorName: c.from,
+                                content: c.content,
+                                replyTo: c.replyTo || null,
+                                time: c.time || cmd.time,
+                            }));
+                        }
                     }
                 }
 
