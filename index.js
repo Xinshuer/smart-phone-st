@@ -647,6 +647,13 @@ function onPromptReady(eventData) {
     // v0.14.67 ⭐ 还原 chat 历史里 AI 之前发的 PHONE 块原文，**仅当前 thread 的**
     // （切换联系人时旧 thread 的 NSFW 上下文不应污染新 thread）。
     // 非当前 thread 的 assistant message 保持 '📱'（AI 看到 '📱' 知道有过其他对话但不知道内容）
+    // v0.14.85 ⭐ Bug A 修复：同时把 past user 消息的长 OOC wrapper 剥光，只留 user
+    // 实际说的话。原结构每条 user 消息都是 "📱 <Request: 几千字 OOC + user 实际消息夹中间>"，
+    // Flash 等小模型解析不出对话流 → AI 不知道自己之前说过什么。剥后 AI 看到清晰对话：
+    //   [user] 你今天怎么样
+    //   [asst] <PHONE><SMS FROM="X">还行</SMS></PHONE>
+    //   [user] 一起吃饭吗
+    //   [asst] <PHONE>...</PHONE>
     if (Array.isArray(eventData.chat)) {
         const ctxChat = getContext()?.chat || [];
         const currentTid = currentThread || '__global__';
@@ -668,18 +675,51 @@ function onPromptReady(eventData) {
         }
         let oi = 0;
         let restored = 0;
-        for (const m of eventData.chat) {
-            if (!m || m.role !== 'assistant') continue;
-            if (m.content === '📱' && oi < originals.length) {
-                if (originals[oi]) {
-                    m.content = originals[oi];
-                    restored++;
+        let userCleaned = 0;
+        // v0.14.85 OOC user 消息剥壳：找 === user 消息 === ... === 完 === 之间的内容
+        const USER_MSG_EXTRACT_RE = /===\s*user\s*消息\s*===\s*([\s\S]*?)\s*===\s*完\s*===/i;
+        // 兼容旧格式 "用户发送的短信内容：「xxx」"（已剥光「」 → "用户发送的短信内容：" 后到换行）
+        const LEGACY_USER_MSG_RE = /用户发送的短信内容\s*[:：]\s*([^\n]+)/;
+        // 当前回合（chat 末尾的 user 消息）不动；只剥**历史**用户 OOC，让历史保持清晰
+        // 找最后一条 user 消息的索引
+        let lastUserIdx = -1;
+        for (let i = eventData.chat.length - 1; i >= 0; i--) {
+            if (eventData.chat[i]?.role === 'user') { lastUserIdx = i; break; }
+        }
+        for (let mi = 0; mi < eventData.chat.length; mi++) {
+            const m = eventData.chat[mi];
+            if (!m) continue;
+            // assistant 还原 PHONE 块（仅当前 thread）
+            if (m.role === 'assistant') {
+                if (m.content === '📱' && oi < originals.length) {
+                    if (originals[oi]) {
+                        m.content = originals[oi];
+                        restored++;
+                    }
+                    oi++;
                 }
-                // null（其他 thread）保持 '📱'
-                oi++;
+                continue;
+            }
+            // user 历史消息剥 OOC（保留当前回合 user 不动）
+            if (m.role === 'user' && mi !== lastUserIdx && typeof m.content === 'string') {
+                const c = m.content;
+                // 仅处理含 OOC 标记的（小红书/朋友圈/SMS/群聊等手机指令）
+                if (c.length > 200 && /(实时手机指令|手机短信|手机群聊|命令角色发帖|群聊生图指令)/.test(c)) {
+                    const m1 = c.match(USER_MSG_EXTRACT_RE) || c.match(LEGACY_USER_MSG_RE);
+                    if (m1 && m1[1]) {
+                        m.content = m1[1].trim();
+                        userCleaned++;
+                    } else {
+                        // 抓不到实际 user 文本时，至少把超长 OOC 标记为简短摘要
+                        m.content = '[手机指令]';
+                        userCleaned++;
+                    }
+                }
             }
         }
-        if (restored > 0) console.log(`[smart-phone v0.14.67] 还原 ${restored} 条当前 thread "${currentTid}" 的 PHONE 块（跳过 ${skippedOtherThread} 条其他 thread）`);
+        if (restored > 0 || userCleaned > 0) {
+            console.log(`[smart-phone v0.14.85] 还原 ${restored} 条 PHONE 块 + 剥 ${userCleaned} 条 past user OOC（thread "${currentTid}"，跳过 ${skippedOtherThread} 条其他 thread）`);
+        }
     }
 
     const contacts = s.contacts.map((c) => ({ name: c.name, note: c.note }));
@@ -691,12 +731,13 @@ function onPromptReady(eventData) {
     if (currentThread && isGroupThread(currentThread)) {
         const group = State.findGroup(currentThread);
         if (group) {
+            // v0.14.85 群成员档案从 1500 字削到 600 字（保核心性格/口癖/称呼/anchor 提示，
+            // 删 verbose lore + 复杂背景）— Flash 等小模型 context 紧张，群成员人数多时容易爆
             const members = State.resolveGroupMembers(group)
                 .filter(m => !m.isDeleted && m.contact)
                 .map(m => ({
                     name: m.nameSnapshot,
-                    // 抽 contact.rawContent 前 1500 字符作为核心人设档案
-                    profile: (m.contact.rawContent || m.contact.note || '').slice(0, 1500),
+                    profile: (m.contact.rawContent || m.contact.note || '').slice(0, 600),
                 }));
             activeGroup = { name: group.name, members };
         }
@@ -1430,6 +1471,43 @@ async function onMessageReceived() {
                 gcandidates[i].subject = savedNpcNames[offset + i];
                 console.log(`[smart-phone v0.14.48] 自动关联 GMSG pic → SUBJECT="${savedNpcNames[offset + i]}"`);
             }
+        }
+    }
+
+    // v0.14.85 ⭐ Bug B 反向校验：NPC_PROFILE 保存了但同回合没有任何 pic 含其名
+    // → toast 警告 user "该 NPC 已加联系人但还没图，下次 AI 自然引出或手动 ✨ 生成"
+    if (savedNpcNames.length > 0) {
+        const npcsWithPic = new Set();
+        for (const s of (parsed.sms || [])) {
+            if (s.pic) {
+                if (s.subject && savedNpcNames.includes(s.subject)) npcsWithPic.add(s.subject);
+                else if (savedNpcNames.includes(s.from)) npcsWithPic.add(s.from);
+            }
+        }
+        for (const g of (parsed.group || [])) {
+            if (g.pic) {
+                if (g.subject && savedNpcNames.includes(g.subject)) npcsWithPic.add(g.subject);
+                else if (savedNpcNames.includes(g.from)) npcsWithPic.add(g.from);
+            }
+        }
+        // moments/xhs/forum 的 pic 也算（如果 AI 给新 NPC 写了帖子）
+        for (const m of (parsed.moments || [])) {
+            if (m.pic && savedNpcNames.includes(m.from)) npcsWithPic.add(m.from);
+        }
+        for (const x of (parsed.xhs || [])) {
+            if (x.pic && savedNpcNames.includes(x.from)) npcsWithPic.add(x.from);
+        }
+        for (const f of (parsed.forum || [])) {
+            if (f.pic && savedNpcNames.includes(f.from)) npcsWithPic.add(f.from);
+        }
+        const noPicNpcs = savedNpcNames.filter(n => !npcsWithPic.has(n));
+        if (noPicNpcs.length > 0) {
+            toastr.warning(
+                `新 NPC「${noPicNpcs.join('、')}」已加人设但 AI 没出对应 pic。可点该联系人的 ✨ 按钮手动生成视觉档案图，或点 ↩ 重新生成让 AI 补图。`,
+                'NPC 缺图',
+                { timeOut: 8000 },
+            );
+            console.warn(`[smart-phone v0.14.85] NPC_PROFILE 缺配套 pic: ${noPicNpcs.join(', ')}`);
         }
     }
 
