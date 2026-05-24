@@ -2514,6 +2514,11 @@ function openBatchAssignOrphansModal() {
 
     const body = `
         <p class="phone-settings-hint">勾选并选目的地世界书，可逐条不同选择，也可批量统一分配。</p>
+        <div class="phone-modal-bulk-bar">
+            <button type="button" id="phone-orphan-select-all" class="phone-btn">☑️ 全选</button>
+            <button type="button" id="phone-orphan-select-none" class="phone-btn">☐ 全不选</button>
+            <span class="phone-modal-bulk-count" id="phone-orphan-checked-count">已勾选 0 / ${orphans.length}</span>
+        </div>
         <div class="phone-orphan-list">${rows}</div>
         <div class="phone-orphan-batch">
             <label>批量统一：</label>
@@ -2530,6 +2535,25 @@ function openBatchAssignOrphansModal() {
     `;
     const modal = openContactsModal('批量分配未归属联系人', body, footer);
     if (!modal) return;
+
+    // v0.14.88 全选 / 全不选
+    const updateCheckedCount = () => {
+        const n = modal.querySelectorAll('.phone-orphan-check:checked').length;
+        const total = orphans.length;
+        const el = modal.querySelector('#phone-orphan-checked-count');
+        if (el) el.textContent = `已勾选 ${n} / ${total}`;
+    };
+    modal.querySelector('#phone-orphan-select-all')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-orphan-check').forEach((cb) => { cb.checked = true; });
+        updateCheckedCount();
+    });
+    modal.querySelector('#phone-orphan-select-none')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-orphan-check').forEach((cb) => { cb.checked = false; });
+        updateCheckedCount();
+    });
+    modal.querySelectorAll('.phone-orphan-check').forEach((cb) => {
+        cb.addEventListener('change', updateCheckedCount);
+    });
 
     modal.querySelector('#phone-orphan-batch-apply')?.addEventListener('click', () => {
         const target = modal.querySelector('#phone-orphan-batch-select')?.value || '';
@@ -2665,6 +2689,11 @@ function openImportFromOtherWorldModal() {
 
     const body = `
         <p class="phone-settings-hint">勾选要引入到当前世界（${escapeHtml(activeBooks.join(' / '))}）的联系人。anchor 数据共享，不会重新生成。</p>
+        <div class="phone-modal-bulk-bar">
+            <button type="button" id="phone-cw-select-all" class="phone-btn">☑️ 全选</button>
+            <button type="button" id="phone-cw-select-none" class="phone-btn">☐ 全不选</button>
+            <span class="phone-modal-bulk-count" id="phone-cw-checked-count">已勾选 0 / ${candidates.length}</span>
+        </div>
         <div class="phone-cw-list">${rows}</div>
     `;
     const footer = `
@@ -2673,6 +2702,26 @@ function openImportFromOtherWorldModal() {
     `;
     const modal = openContactsModal('从其他世界引入联系人', body, footer);
     if (!modal) return;
+
+    // v0.14.88 全选 / 全不选
+    const updateCheckedCount = () => {
+        const n = modal.querySelectorAll('.phone-cw-check:checked').length;
+        const total = candidates.length;
+        const el = modal.querySelector('#phone-cw-checked-count');
+        if (el) el.textContent = `已勾选 ${n} / ${total}`;
+    };
+    modal.querySelector('#phone-cw-select-all')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-cw-check').forEach((cb) => { cb.checked = true; });
+        updateCheckedCount();
+    });
+    modal.querySelector('#phone-cw-select-none')?.addEventListener('click', () => {
+        modal.querySelectorAll('.phone-cw-check').forEach((cb) => { cb.checked = false; });
+        updateCheckedCount();
+    });
+    modal.querySelectorAll('.phone-cw-check').forEach((cb) => {
+        cb.addEventListener('change', updateCheckedCount);
+    });
+
     modal.querySelector('.phone-forward-cancel')?.addEventListener('click', () => modal.remove());
     modal.querySelector('#phone-cw-import')?.addEventListener('click', () => {
         const checked = [...modal.querySelectorAll('.phone-cw-check:checked')];

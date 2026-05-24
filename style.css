@@ -249,7 +249,8 @@
  * 中文 line-height 显式 1.5 防挤压 */
 .phone-list-title { font-weight: 600; color: #1e293b; font-size: 15px; line-height: 1.4; }
 .phone-list-preview { font-size: 13px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; margin-top: 2px; }
-.phone-list-time { font-size: 12px; color: #94a3b8; align-self: flex-start; padding-top: 2px; }
+/* v0.14.88 时间字色 #94a3b8→#64748b（提升对比度，WCAG AA 4.5:1+） */
+.phone-list-time { font-size: 12px; color: #64748b; align-self: flex-start; padding-top: 2px; }
 
 .phone-thread-header {
     display: flex;
@@ -358,6 +359,12 @@ img.wc-av { object-fit: cover; }
 }
 .phone-bubble.bubble-active .bubble-edit-pencil { display: flex; }
 .bubble-edit-pencil:hover { background: rgba(0, 0, 0, 0.75); }
+/* v0.14.88 ⭐ 修铅笔按钮跟时间/内容重叠：active 状态下气泡右下角预留 38px 空间给 28px 铅笔
+ * 之前短消息（"好的"/"嗯"）+ 时间 14:30 + 铅笔三者撞在右下角看不清 */
+.phone-bubble.bubble-active {
+    padding-right: 42px;
+    padding-bottom: 8px;
+}
 
 /* v0.14.42 新 NPC chip — AI 引入新角色时显示"🆕 新认识 X · 一键保存"按钮 */
 .phone-new-npc-chip-row {
@@ -796,10 +803,16 @@ img.phone-pick-av { object-fit: cover; }
 .phone-pic { cursor: zoom-in; }
 .wc-divider {
     text-align: center;
-    font-size: 11px;
-    color: #aaa;
-    margin: 8px 0;
+    font-size: 12px;
+    /* v0.14.88 #aaa→#525252，11→12px（之前太淡看不清时间分隔线） */
+    color: #525252;
+    margin: 10px 0;
     user-select: none;
+    background: rgba(0,0,0,0.04);
+    padding: 3px 10px;
+    border-radius: 10px;
+    display: inline-block;
+    align-self: center;
 }
 .phone-reroll-btn {
     background: none;
@@ -852,10 +865,12 @@ img.phone-pick-av { object-fit: cover; }
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .tb-card-preview {
-    font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 6px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    /* v0.14.88 字号 12→13 / line-clamp 2→3（之前两行太短，帖子质量难判断） */
+    font-size: 13px; color: #555; line-height: 1.5; margin-bottom: 6px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.tb-card-footer { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #999; flex-wrap: wrap; }
+/* v0.14.88 footer 字号 11→12 / 字色 #999→#666 */
+.tb-card-footer { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #666; flex-wrap: wrap; }
 .tb-board-tag { background: #e8f0fe; color: #0b72df; border-radius: 3px; padding: 1px 5px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
 .tb-author { color: #555; font-weight: 500; }
 .tb-stat { color: #888; }
@@ -880,7 +895,8 @@ img.phone-pick-av { object-fit: cover; }
 /* 楼层 — 回复 */
 .tb-floor { display: flex; gap: 10px; padding: 10px 14px; background: #fff; border-bottom: 1px solid #f0f0f0; }
 .tb-floor-side { display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0; }
-.tb-floor-num { font-size: 10px; color: #bbb; }
+/* v0.14.88 楼层号字色 #bbb→#888，字号 10→11（楼层号太淡看不清） */
+.tb-floor-num { font-size: 11px; color: #888; font-weight: 500; }
 .tb-floor-av {
     width: 36px; height: 36px; border-radius: 4px;
     background: #0b72df; color: #fff; font-size: 15px; font-weight: 600;
@@ -889,7 +905,8 @@ img.phone-pick-av { object-fit: cover; }
 .tb-floor-body { flex: 1; min-width: 0; }
 .tb-floor-author { font-size: 13px; font-weight: 600; color: #0b72df; margin-bottom: 4px; }
 .tb-floor-content { font-size: 13px; color: #333; line-height: 1.6; word-break: break-word; }
-.tb-floor-meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 11px; color: #999; flex-wrap: wrap; }
+/* v0.14.88 楼层 meta 字色 #999→#666 + 字号 11→12（提升对比度） */
+.tb-floor-meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 12px; color: #666; flex-wrap: wrap; }
 /* (forum-reroll-row / .forum-reroll-pic-btn removed v0.10.0 — unified into .phone-img-reroll-btn) */
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1836,6 +1853,28 @@ img.moments-av { object-fit: cover; border-radius: 4px; width: 40px; height: 40p
     width: 32px;
     height: 32px;
     font-size: 12px;
+}
+
+/* v0.14.88 批量操作 modal 顶部工具栏（全选/全不选/计数器） */
+.phone-modal-bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #e5e7eb;
+    flex-wrap: wrap;
+}
+.phone-modal-bulk-bar .phone-btn {
+    padding: 6px 12px;
+    font-size: 13px;
+    min-height: 32px;
+}
+.phone-modal-bulk-count {
+    margin-left: auto;
+    font-size: 12px;
+    color: #525252;
+    font-weight: 500;
 }
 
 /* v0.14.87 超窄屏适配（Termux 实际可能 240-320px）
