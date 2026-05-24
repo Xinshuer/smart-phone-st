@@ -179,7 +179,17 @@
 .phone-empty-inline {
     color: #475569;
     padding: 8px 4px;
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.6;
+}
+.phone-empty-inline small {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 400;
+    color: #64748b;
+    line-height: 1.4;
 }
 
 .phone-avatar {
@@ -478,7 +488,7 @@ img.wc-av { object-fit: cover; }
     padding-left: 2px;
 }
 .wc-sender-deleted {
-    color: #999;
+    color: #6b7280;
     font-style: italic;
     font-weight: 400;
 }
@@ -598,7 +608,7 @@ img.phone-pick-av { object-fit: cover; }
 .phone-pick-name { flex: 1; min-width: 0; }
 .phone-anchor-ok { color: #07c160; font-size: 11px; }
 .phone-anchor-warn { color: #e74c3c; font-size: 11px; }
-.phone-anchor-deleted { color: #999; font-size: 11px; font-style: italic; }
+.phone-anchor-deleted { color: #6b7280; font-size: 12px; font-style: italic; }
 .phone-anchor-go-link {
     color: #1976d2; font-size: 11px;
     margin-left: 4px; text-decoration: none;
@@ -714,8 +724,8 @@ img.phone-pick-av { object-fit: cover; }
 .phone-list-more-hint {
     padding: 14px 16px;
     text-align: center;
-    font-size: 12px;
-    color: #888;
+    font-size: 13px;
+    color: #525252;
     background: #fafafa;
     border-top: 1px dashed #ddd;
     margin-top: 8px;
@@ -957,7 +967,7 @@ img.phone-pick-av { object-fit: cover; }
 .phone-img-cell .phone-image-slot {
     width: 100%; height: 100%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: #999; background: rgba(143, 184, 237, 0.08);
+    font-size: 12px; color: #525252; background: rgba(143, 184, 237, 0.08);
 }
 .phone-img-grid-1 .phone-img-cell .phone-image-slot {
     min-height: 120px;
@@ -1134,8 +1144,8 @@ img.phone-pick-av { object-fit: cover; }
     margin-top: 4px;
 }
 .phone-promote-warn {
-    font-size: 11px;
-    color: #888;
+    font-size: 12px;
+    color: #525252;
     margin: 8px 0 0 0;
     line-height: 1.5;
 }
@@ -1165,7 +1175,7 @@ img.phone-pick-av { object-fit: cover; }
     color: #9ca3af; font-size: 12px;
     background: #f9fafb; border-radius: 6px;
 }
-.tb-floor-time { color: #bbb; }
+.tb-floor-time { color: #888; }
 .tb-replies { background: #f8f8f8; }
 
 /* 发帖 compose */
@@ -1349,7 +1359,7 @@ img.phone-pick-av { object-fit: cover; }
 .xhs-card-meta { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
 .xhs-card-avatar { width: 16px; height: 16px; border-radius: 50%; background: #ff2442; color: #fff; font-size: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .xhs-card-user { font-size: 10px; color: #555; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.xhs-card-likes { font-size: 10px; color: #999; }
+.xhs-card-likes { font-size: 11px; color: #525252; }
 .xhs-mine-badge { background: #ff2442; color: #fff; font-size: 9px; padding: 1px 4px; border-radius: 4px; margin-left: 3px; vertical-align: middle; }
 
 /* Compose */
@@ -1379,14 +1389,14 @@ img.phone-pick-av { object-fit: cover; }
 .xhs-tag-pill { display: inline-block; color: #ff2442; font-size: 12px; margin-bottom: 10px; }
 /* v0.14.87 详情正文行高 1.8→1.6 对标小红书阅读体验；字号 13→14 */
 .xhs-detail-body { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-line; }
-.xhs-detail-time { font-size: 11px; color: #aaa; margin-top: 10px; }
+.xhs-detail-time { font-size: 12px; color: #64748b; margin-top: 10px; }
 .xhs-detail-actions { display: flex; gap: 20px; padding: 10px 12px; background: #fff; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #666; }
 .xhs-comments { padding: 10px 12px 20px; background: #fff; margin-top: 8px; }
 .xhs-comments-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #1a1a1a; }
 .xhs-comment { display: flex; flex-direction: column; padding: 8px 0; border-bottom: 1px solid #f5f5f5; font-size: 12px; }
 .xhs-comment-user { font-weight: 600; color: #ff2442; }
 .xhs-comment-text { color: #333; margin-top: 3px; line-height: 1.5; }
-.xhs-comment-time { font-size: 10px; color: #aaa; margin-top: 3px; }
+.xhs-comment-time { font-size: 11px; color: #64748b; margin-top: 3px; }
 
 .phone-api-presets { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 8px; }
 .phone-api-preset { font-size: 11px; padding: 4px 8px; }
@@ -1406,7 +1416,8 @@ img.phone-pick-av { object-fit: cover; }
 .phone-link-btn:hover { color: #1e40af !important; }
 .phone-wc-active { background: #dcfce7 !important; color: #16a34a !important; border-color: #86efac !important; }
 .phone-settings-section h4 { font-size: 12px; margin: 12px 0 6px; color: #475569; }
-.phone-settings-hint { font-size: 11px; color: #64748b; margin: 4px 0 8px; line-height: 1.5; }
+/* v0.14.91 settings hint：11→13px / #64748b→#525252（之前太小太淡，11px 中文几乎不可读）*/
+.phone-settings-hint { font-size: 13px; color: #525252; margin: 4px 0 10px; line-height: 1.6; }
 .phone-settings-row { display: flex; flex-direction: column; gap: 4px; font-size: 12px; margin-top: 8px; color: #475569; }
 
 .phone-wb-row, .phone-contact-row {
