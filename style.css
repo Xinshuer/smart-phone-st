@@ -238,16 +238,18 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 8px;
+    padding: 12px 10px;
     border-radius: 12px;
     cursor: pointer;
     transition: background 0.2s;
 }
 .phone-list-item:hover { background: rgba(255, 255, 255, 0.6); }
 .phone-list-text { flex: 1; min-width: 0; }
-.phone-list-title { font-weight: 600; color: #1e293b; }
-.phone-list-preview { font-size: 12px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.phone-list-time { font-size: 11px; color: #94a3b8; }
+/* v0.14.87 消息列表字号上调：title 14→15px / preview 12→13px / time 11→12px
+ * 中文 line-height 显式 1.5 防挤压 */
+.phone-list-title { font-weight: 600; color: #1e293b; font-size: 15px; line-height: 1.4; }
+.phone-list-preview { font-size: 13px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; margin-top: 2px; }
+.phone-list-time { font-size: 12px; color: #94a3b8; align-self: flex-start; padding-top: 2px; }
 
 .phone-thread-header {
     display: flex;
@@ -295,12 +297,16 @@
 img.wc-av { object-fit: cover; }
 
 .phone-bubble {
-    max-width: 72%;
-    padding: 8px 12px;
+    /* v0.14.87 UX: max-width 响应式 — 窄屏 (Termux 360px 壳) 72% 留白过多
+     * min() 二选一：超过 280px 用 78%，否则保证最少 180px 宽度避免中文挤一字一行 */
+    max-width: min(78%, calc(100% - 60px));
+    min-width: 80px;
+    padding: 9px 13px;
     border-radius: 4px 12px 12px 12px;
     background: #fff;
     position: relative;
     word-break: break-word;
+    line-height: 1.55;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .phone-bubble::before {
@@ -324,23 +330,25 @@ img.wc-av { object-fit: cover; }
     border-left: 7px solid #95ec69;
 }
 .phone-bubble-time {
-    font-size: 10px;
-    opacity: 0.55;
-    margin-top: 4px;
+    /* v0.14.87 时间字号 10→11，opacity 0.55→0.6（移动端 10px 太小） */
+    font-size: 11px;
+    opacity: 0.6;
+    margin-top: 5px;
     text-align: right;
 }
-/* Inline edit (Issue #1) — single tap reveals pencil; tap pencil → swap content for textarea */
+/* Inline edit — tap reveals pencil; tap pencil → swap content for textarea
+ * v0.14.87 触摸目标 24→28px（iOS HIG 最小 44px，气泡内空间有限折中），bg 0.55→0.7 提升可视性 */
 .bubble-edit-pencil {
     position: absolute;
     bottom: 4px;
     right: 6px;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.7);
     color: #fff;
     border: none;
     border-radius: 50%;
-    width: 24px;
-    height: 24px;
-    font-size: 12px;
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
     line-height: 1;
     padding: 0;
     cursor: pointer;
@@ -442,15 +450,33 @@ img.wc-av { object-fit: cover; }
     display: flex; flex-direction: column; flex: 1; min-width: 0;
 }
 .wc-sender-name {
-    font-size: 11px; color: #888;
-    margin-bottom: 3px; padding-left: 2px;
+    /* v0.14.87 群聊发送者标签：11→12px / #888→#525252 / 加 weight 500
+     * 之前在深色主题下与气泡背景对比度不足，发言者难辨认 */
+    font-size: 12px;
+    color: #525252;
+    font-weight: 500;
+    margin-bottom: 4px;
+    padding-left: 2px;
 }
 .wc-sender-deleted {
-    color: #aaa; font-style: italic;
+    color: #999;
+    font-style: italic;
+    font-weight: 400;
 }
 .wc-row-deleted .phone-bubble {
     opacity: 0.55;
     filter: grayscale(0.7);
+}
+/* v0.14.87 已删除成员加左侧斜纹背景条，区别于"加载中"误读 */
+.wc-row-deleted {
+    background: repeating-linear-gradient(
+        135deg,
+        transparent 0,
+        transparent 4px,
+        rgba(0, 0, 0, 0.03) 4px,
+        rgba(0, 0, 0, 0.03) 8px
+    );
+    border-radius: 8px;
 }
 
 /* 创建群聊 / 群聊生图 modal 通用
@@ -710,38 +736,48 @@ img.phone-pick-av { object-fit: cover; }
 .phone-stranger-body {
     border-top: 1px solid #ffe5b4;
 }
+/* v0.14.87 陌生人行重排：横挤 → 名字独占一行 + 操作按钮单独一行
+ * 之前 5 元素挤一行（kind/name/count/edit/promote/delete），360px 屏幕字几乎被压没 */
 .phone-stranger-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 8px;
+    padding: 10px 12px;
     border-bottom: 1px solid #ffe5b4;
-    font-size: 12px;
+    font-size: 13px;
 }
 .phone-stranger-row:last-child { border-bottom: none; }
 .phone-stranger-kind {
     flex-shrink: 0;
-    font-size: 10px;
+    font-size: 11px;
     color: #666;
+    background: rgba(0,0,0,0.04);
+    padding: 2px 6px;
+    border-radius: 4px;
 }
 .phone-stranger-name {
-    flex: 1;
+    flex: 1 1 calc(100% - 80px);
     min-width: 0;
     color: #333;
     font-weight: 500;
+    font-size: 13px;
 }
 .phone-stranger-count {
     color: #888;
-    font-size: 11px;
+    font-size: 12px;
+    flex-shrink: 0;
 }
+/* 按钮组换行后右对齐 */
 .phone-stranger-row .phone-btn {
-    padding: 2px 6px;
+    padding: 5px 10px;
     font-size: 12px;
     line-height: 1.4;
     background: #fff;
     border: 1px solid #ddd;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
+    min-height: 28px;
 }
 .phone-stranger-row .phone-btn:hover { background: #f0f0f0; }
 .bubble-edit-actions {
@@ -1269,7 +1305,8 @@ img.phone-pick-av { object-fit: cover; }
 /* 图片区 — 3:4 比例 */
 .xhs-card-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; position: relative; padding: 0; text-align: left; flex-shrink: 0; }
 .xhs-card-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
-.xhs-card-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+/* v0.14.87 shimmer 节奏 1.5→2.5s + opacity 脉动叠加 — 原 1.5s 高频位移 6 卡同闪眼疼 */
+.xhs-card-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 2.5s ease-in-out infinite; opacity: 0.85; }
 @keyframes xhs-shimmer { 0% { background-position: 200% } 100% { background-position: -200% } }
 
 /* 卡片底部 — title 锁定 2 行最小高度（1 行 / 2 行标题都占 2 行空间） */
@@ -1305,13 +1342,14 @@ img.phone-pick-av { object-fit: cover; }
 .xhs-follow { background: #ff2442; color: #fff; border: none; border-radius: 20px; padding: 4px 14px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
 .xhs-detail-img { width: 100%; aspect-ratio: 3/4; background: #f0f0f0; overflow: hidden; flex-shrink: 0; padding: 0; }
 .xhs-detail-img img.phone-pic { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0 !important; display: block; }
-.xhs-detail-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 1.5s infinite; }
+.xhs-detail-img:not(:has(img)) { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200%; animation: xhs-shimmer 2.5s ease-in-out infinite; opacity: 0.85; }
 .xhs-detail-img-actions { display: flex; justify-content: flex-end; padding: 6px 10px; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
 /* (.xhs-reroll-pic-btn removed v0.10.0 — unified into .phone-img-reroll-btn) */
 .xhs-detail-content { padding: 14px 12px 8px; background: #fff; }
-.xhs-detail-title { font-size: 16px; font-weight: 600; line-height: 1.5; margin-bottom: 6px; color: #1a1a1a; }
+.xhs-detail-title { font-size: 17px; font-weight: 600; line-height: 1.4; margin-bottom: 6px; color: #1a1a1a; }
 .xhs-tag-pill { display: inline-block; color: #ff2442; font-size: 12px; margin-bottom: 10px; }
-.xhs-detail-body { font-size: 13px; line-height: 1.8; color: #333; white-space: pre-line; }
+/* v0.14.87 详情正文行高 1.8→1.6 对标小红书阅读体验；字号 13→14 */
+.xhs-detail-body { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-line; }
 .xhs-detail-time { font-size: 11px; color: #aaa; margin-top: 10px; }
 .xhs-detail-actions { display: flex; gap: 20px; padding: 10px 12px; background: #fff; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #666; }
 .xhs-comments { padding: 10px 12px 20px; background: #fff; margin-top: 8px; }
@@ -1458,7 +1496,9 @@ img.phone-pick-av { object-fit: cover; }
 .phone-contact-prompt-label { font-size: 10px; color: #94a3b8; margin-top: 4px; display: block; }
 .phone-anchor-row { display: flex; gap: 4px; align-items: center; margin-top: 2px; }
 .phone-anchor-row .phone-contact-anchor-edit { flex: 1; min-width: 0; }
-.phone-contact-anchor-edit { font-size: 11px; padding: 4px 6px; }
+/* v0.14.87 anchor 编辑框：11→13px / padding 4 6→7 9 — 移动端中文输入体验差，
+ * 11px 在 360 屏幕几乎看不清，padding 太紧难点准 */
+.phone-contact-anchor-edit { font-size: 13px; padding: 7px 9px; line-height: 1.4; }
 .phone-gen-appearance { flex-shrink: 0; padding: 4px 6px; font-size: 11px; }
 .phone-btn[disabled] { opacity: 0.55; cursor: wait; }
 
@@ -1735,14 +1775,23 @@ img.phone-pick-av { object-fit: cover; }
 img.moments-av { object-fit: cover; border-radius: 4px; width: 40px; height: 40px; display: block; }
 .moments-body { flex: 1; min-width: 0; }
 .moments-name { font-size: 13px; font-weight: 600; color: #576b95; margin-bottom: 4px; }
-.moments-content { font-size: 13px; color: #333; line-height: 1.6; word-break: break-word; }
+/* v0.14.87 朋友圈内容字号 13→14 + 长内容 6 行折叠（避免赞/评论按钮被推到屏外难点） */
+.moments-content {
+    font-size: 14px; color: #333; line-height: 1.55; word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
 
-/* Meta 行 */
-.moments-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-.moments-time { font-size: 11px; color: #aaa; }
-.moments-location { font-size: 11px; color: #aaa; }
+/* Meta 行 — v0.14.87 时间/位置字号 11→12，赞/评论按钮触摸目标 +padding */
+.moments-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.moments-time { font-size: 12px; color: #888; }
+.moments-location { font-size: 12px; color: #888; }
 .moments-actions { margin-left: auto; display: flex; gap: 6px; }
-.moments-like-btn, .moments-comment-btn { background: none; border: 1px solid #ddd; border-radius: 4px; padding: 2px 8px; font-size: 12px; color: #888; cursor: pointer; }
+.moments-like-btn, .moments-comment-btn {
+    background: none; border: 1px solid #ddd; border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; color: #666; cursor: pointer;
+    min-height: 32px; line-height: 1;
+}
 .moments-like-btn.liked { color: #576b95; border-color: #576b95; font-weight: 600; }
 .moments-like-btn:active, .moments-comment-btn:active { background: #f0f0f0; }
 
@@ -1787,4 +1836,22 @@ img.moments-av { object-fit: cover; border-radius: 4px; width: 40px; height: 40p
     width: 32px;
     height: 32px;
     font-size: 12px;
+}
+
+/* v0.14.87 超窄屏适配（Termux 实际可能 240-320px）
+ * 默认 max-width 480 + pointer:coarse 已覆盖普通手机
+ * 这层补充极端窄屏 */
+@media (max-width: 340px) {
+    .phone-bubble { padding: 8px 10px; max-width: 85%; }
+    .phone-bubble-time { font-size: 10px; }
+    .phone-list-item { padding: 10px 8px; gap: 8px; }
+    .phone-list-title { font-size: 14px; }
+    .phone-list-preview { font-size: 12px; }
+    .phone-list-time { font-size: 11px; }
+    .moments-card { padding: 10px 12px; gap: 8px; }
+    .moments-av, img.moments-av { width: 36px; height: 36px; }
+    .moments-content { font-size: 13px; }
+    .xhs-feed { padding: 4px; gap: 6px; }
+    .xhs-card-title { font-size: 12px; }
+    .phone-contact-anchor-edit { font-size: 12px; padding: 6px 8px; }
 }
