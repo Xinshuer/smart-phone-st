@@ -158,16 +158,28 @@
 .smart-phone-close:hover { background: rgba(0, 0, 0, 0.1); }
 
 /* ─── Common ─── */
+/* v0.14.90 空状态字色 #94a3b8→#475569（slate-600，对比度 8:1+ WCAG AAA）
+ * 主标题加 font-weight 600 + size 16；小字 override <small> 默认 80% 压缩到 13px */
 .phone-empty {
     text-align: center;
-    color: #94a3b8;
+    color: #475569;
+    font-size: 16px;
+    font-weight: 600;
     padding: 60px 20px;
-    line-height: 1.8;
+    line-height: 1.7;
+}
+.phone-empty small {
+    display: block;
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 400;
+    color: #64748b;
+    line-height: 1.5;
 }
 .phone-empty-inline {
-    color: #94a3b8;
+    color: #475569;
     padding: 8px 4px;
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .phone-avatar {
